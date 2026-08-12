@@ -154,9 +154,11 @@ export class Lease {
     this.held = false;
     this.onChange = () => {};
     this.lastError = null;
+    this.gen = 0;      // bumped on acquire/release so stale heartbeats no-op
   }
 
   async acquire() {
+    this.gen++;
     const lease = await this.api.post('/api/v1/control', {
       client_id: this.clientId, domains: this.domains, ttl_s: this.ttl,
     });
@@ -176,12 +178,17 @@ export class Lease {
   }
 
   async _beat() {
+    const gen = this.gen;
     try {
       const lease = await this.api.post(
         `/api/v1/control/heartbeat?ttl_s=${this.ttl}`, {},
       );
+      // A release/acquire may have happened while this was in flight; a
+      // stale success must not flip the UI back to "held".
+      if (gen !== this.gen) return;
       this.onChange('held', lease);
     } catch (e) {
+      if (gen !== this.gen) return;   // deliberate release, not a loss
       // 404 means the lease already lapsed; anything else may be transient,
       // but we cannot tell the difference from here and the consequence of
       // guessing wrong is an arm that keeps moving with nobody renewing.
@@ -194,6 +201,7 @@ export class Lease {
   }
 
   async release() {
+    this.gen++;
     clearInterval(this.timer);
     const had = this.held;
     this.held = false;

@@ -37,24 +37,61 @@ export class View3D {
   }
 
   _bindOrbit() {
-    let dragging = false, lx = 0, ly = 0;
-    const down = (e) => { dragging = true; lx = e.clientX; ly = e.clientY; };
-    const up = () => { dragging = false; };
-    const move = (e) => {
-      if (!dragging) return;
-      this.yaw += (e.clientX - lx) * 0.01;
-      this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch + (e.clientY - ly) * 0.01));
-      lx = e.clientX; ly = e.clientY;
+    // Pointer-events orbit with two-pointer pinch zoom for touch.
+    const active = new Map();
+    let pinchDist = 0;
+
+    this.c.addEventListener('pointerdown', (e) => {
+      this.c.setPointerCapture(e.pointerId);
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (active.size === 2) {
+        const [a, b] = [...active.values()];
+        pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+      }
+    });
+    const end = (e) => { active.delete(e.pointerId); };
+    this.c.addEventListener('pointerup', end);
+    this.c.addEventListener('pointercancel', end);
+
+    this.c.addEventListener('pointermove', (e) => {
+      const prev = active.get(e.pointerId);
+      if (!prev) return;
+      if (active.size === 1) {
+        this.yaw += (e.clientX - prev.x) * 0.01;
+        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch + (e.clientY - prev.y) * 0.01));
+      }
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (active.size === 2) {
+        const [a, b] = [...active.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinchDist > 0) {
+          this.dist = Math.max(700, Math.min(5000, this.dist * pinchDist / d));
+        }
+        pinchDist = d;
+      }
       this.draw();
-    };
-    this.c.addEventListener('pointerdown', down);
-    window.addEventListener('pointerup', up);
-    window.addEventListener('pointermove', move);
+    });
+
     this.c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.dist = Math.max(700, Math.min(5000, this.dist * (1 + Math.sign(e.deltaY) * 0.12)));
       this.draw();
     }, { passive: false });
+  }
+
+  /** Frame the whole arm: reset orbit to the default view, sized to fit. */
+  fit() {
+    this.yaw = -35 * Math.PI / 180;
+    this.pitch = 22 * Math.PI / 180;
+    let radius = 950;
+    if (this.points) {
+      radius = 250;
+      for (const p of this.points) {
+        radius = Math.max(radius, Math.hypot(p[0], p[1], p[2] - this.zc));
+      }
+    }
+    this.dist = Math.max(700, Math.min(5000, radius * 2.35));
+    this.draw();
   }
 
   /** World (mm, z up) -> screen. Returns [x, y, depth]. */
@@ -122,16 +159,31 @@ export class View3D {
     return v || fallback;
   }
 
+  /** Resolved theme colors, cached: getComputedStyle at 10 Hz forces style
+   * recalc right after the tables mutate the DOM. invalidateTheme() on a
+   * theme switch. */
+  _theme() {
+    if (this._pal) return this._pal;
+    this._pal = {
+      line: this._css('--line', '#21272e'),
+      line2: this._css('--line-2', '#313941'),
+      dim: this._css('--dim', '#9299a1'),
+      text: this._css('--text', '#e5e8ec'),
+      accent: this._css('--accent', '#3f9fe8'),
+      data: this._css('--data', '#0ca3be'),
+      ok: this._css('--ok', '#43c07a'),
+    };
+    return this._pal;
+  }
+
+  invalidateTheme() { this._pal = null; this.draw(); }
+
   draw() {
     const g = this.ctx;
     if (!g || !this.w) return;
     g.clearRect(0, 0, this.w, this.h);
 
-    const line = this._css('--line', '#262b36');
-    const dim = this._css('--dim', '#8b93a7');
-    const fg = this._css('--fg', '#e6e9ef');
-    const accent = this._css('--accent', '#4c8dff');
-    const ok = this._css('--ok', '#2ecc71');
+    const { line, line2, dim, text, accent, data, ok } = this._theme();
 
     this._grid(g, line);
 
@@ -161,15 +213,15 @@ export class View3D {
     }
 
     if (this.meshes && this.frames) {
-      this._drawMeshes(g, fg, ok);
+      this._drawMeshes(g);
     } else {
-      this._drawSkeleton(g, line, dim, fg, accent, ok);
+      this._drawSkeleton(g, line2, dim, text, accent, data);
     }
 
     this._triad(g);
   }
 
-  _drawSkeleton(g, line, dim, fg, accent, ok) {
+  _drawSkeleton(g, line, dim, fg, accent, tip) {
     const proj = this.points.map((p) => this.project(p));
 
     // Links, thick, with a lighter core so they read as tubes.
@@ -189,8 +241,8 @@ export class View3D {
     // Joints
     proj.forEach((p, i) => {
       const last = i === proj.length - 1;
-      g.fillStyle = last ? ok : line;
-      g.strokeStyle = last ? ok : dim;
+      g.fillStyle = last ? tip : line;
+      g.strokeStyle = last ? tip : dim;
       g.lineWidth = 2;
       g.beginPath();
       g.arc(p[0], p[1], last ? 7 : 5.5, 0, Math.PI * 2);
@@ -203,7 +255,7 @@ export class View3D {
    * frame, project, backface-cull, depth-sort every visible face across all
    * links, flat-shade. ~11k faces at 10 Hz is comfortably within canvas 2D.
    */
-  _drawMeshes(g, fg, ok) {
+  _drawMeshes(g) {
     const dark = this._isDark();
     // Fixed light from over the operator's left shoulder, in world space.
     const L = [-0.42, 0.32, 0.85];
@@ -252,7 +304,7 @@ export class View3D {
       const shade = 0.18 + 0.82 * lam;
       const v = dark ? 34 + 165 * shade : 72 + 175 * shade;
       g.fillStyle = last
-        ? `rgb(${0.35 * v | 0},${1.35 * v > 255 ? 255 : 1.35 * v | 0},${0.75 * v | 0})`
+        ? `rgb(${0.30 * v | 0},${1.18 * v > 255 ? 255 : 1.18 * v | 0},${1.28 * v > 255 ? 255 : 1.28 * v | 0})`
         : `rgb(${v | 0},${v + 3 | 0},${v + 9 | 0})`;
       g.beginPath();
       g.moveTo(ax, ay); g.lineTo(bx, by); g.lineTo(cx, cy);

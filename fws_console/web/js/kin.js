@@ -57,7 +57,7 @@ export const MODELS = {
     id: 'sim',
     label: 'FWS simulator',
     provenance: 'exact',
-    note: 'Reproduces fws/testing/kinematics.py exactly. Not an FR5.',
+    note: 'Simulator kinematics — schematic display, not an FR5 model.',
     reach: 920,
     points(joints) {
       const [j1, j2, j3] = joints.slice(0, 3).map((d) => d * RAD);

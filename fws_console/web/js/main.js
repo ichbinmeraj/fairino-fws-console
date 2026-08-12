@@ -1,10 +1,11 @@
-// Console shell: telemetry binding, control lease, jogging, tab routing.
+// Console shell: theme, navigation, status, control lease, jogging, charts.
 
 import { Api, ApiError, Lease } from './api.js';
 import { Stream } from './stream.js';
 import { View3D } from './view3d.js';
 import { MODELS, agreement, modelFor, verdict } from './kin.js';
 import { PANELS } from './panels.js';
+import { invalidateChartTheme, SharedScale, Spark } from './charts.js';
 
 const api = new Api('');            // same origin: the gateway serves this page
 const lease = new Lease(api);
@@ -12,61 +13,157 @@ const stream = new Stream(api.wsOrigin);
 const $ = (id) => document.getElementById(id);
 
 let model = MODELS.sim;
-let commanding = false;             // a jog is in flight
+// The simulator reports the same identity string as real hardware, so the
+// model cannot be picked by name. Instead every candidate is scored against
+// the controller's own reported TCP for the first second of frames and the
+// one that measures best wins — the same honesty machinery as the badge.
+let candidates = null;              // [{model, sum, n}] while unlocked
+let commanding = false;             // one command in flight at a time, on purpose
 let lastLimits = null;
-let readOnly = false;               // gateway-declared, from GET /
-let toolOffset = null;              // active tool frame offset, from /frames/tool
+let readOnly = false;
+let toolOffset = null;
+let enabledState = null;            // null = unknown until first command
+let leaseExpiresAt = 0;             // epoch seconds, for the local countdown
+let leaseTtl = 30;
 
-// --- activity log --------------------------------------------------------
+/* ---------------------------------------------------------------- theme */
+
+const THEMES = ['dark', 'light', 'system'];
+
+function applyTheme(pref) {
+  const resolved = pref === 'system'
+    ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : pref;
+  document.documentElement.dataset.theme = resolved;
+  try { localStorage.setItem('fws-theme', pref); } catch { /* private mode */ }
+  invalidateChartTheme();
+  view.invalidateTheme();
+  const label = $('theme-label');
+  if (label) label.textContent = pref;
+}
+
+function themePref() {
+  try { return localStorage.getItem('fws-theme') || 'dark'; } catch { return 'dark'; }
+}
+
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+  if (themePref() === 'system') applyTheme('system');
+});
+
+/* ---------------------------------------------------------------- toasts */
+
+function toast(msg, kind = '', sticky = false) {
+  const host = $('toasts');
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  el.onclick = () => el.remove();
+  host.append(el);
+  while (host.childElementCount > 5) host.firstElementChild.remove();
+  if (!sticky) setTimeout(() => el.remove(), 6000);
+}
+
+/* ---------------------------------------------------------------- log */
 
 function log(msg, kind = '') {
   const el = $('log');
   const line = document.createElement('div');
-  line.className = kind;
-  line.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
+  const t = document.createElement('time');
+  t.textContent = new Date().toLocaleTimeString();
+  const body = document.createElement('span');
+  body.className = kind;
+  body.textContent = msg;
+  line.append(t, body);
   el.prepend(line);
   while (el.childElementCount > 300) el.lastElementChild.remove();
 }
 
-/** Every command goes through here so no failure is ever silent. */
-async function run(label, fn) {
-  if (commanding) return;
-  commanding = true;
-  syncControls();
+/** Every command goes through here so no failure is ever silent.
+ *
+ * Returns RUN_FAILED on any failure instead of rethrowing, so callers that
+ * ignore the result do not shower the console with unhandled rejections.
+ * `priority` bypasses the single-flight gate: Stop must NEVER be a no-op
+ * while a slow jog is still in flight.
+ */
+const RUN_FAILED = Symbol('run-failed');
+
+async function run(label, fn, { quiet = false, priority = false } = {}) {
+  if (commanding && !priority) {
+    jogNote('busy — previous command still in flight', 'warn');
+    return RUN_FAILED;
+  }
+  if (!priority) { commanding = true; syncControls(); }
   try {
     const out = await fn();
-    log(label, 'ok');
+    log(label);
     return out;
   } catch (e) {
-    if (e instanceof ApiError && e.isLocked) {
-      log(`${label} refused — ${e.message}`, 'warn');
-    } else {
-      log(`${label} failed — ${e.message}`, 'err');
-    }
-    throw e;
+    const kind = e instanceof ApiError && e.isLocked ? 'warn' : 'err';
+    log(`failed: ${label} — ${e.message}`, kind);
+    if (quiet) jogNote(e.message, kind);
+    else toast(`${label} failed: ${e.message}`, kind === 'warn' ? 'warn' : 'err');
+    return RUN_FAILED;
   } finally {
-    commanding = false;
-    syncControls();
+    if (!priority) { commanding = false; syncControls(); }
   }
 }
 
-// --- control lease -------------------------------------------------------
+/** Inline status line under the jog pad: errors where the operator's eyes
+ * are, not only in the distant activity log. */
+let jogNoteTimer = 0;
+function jogNote(msg, kind = 'warn') {
+  const el = $('jog-note');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `small ${kind === 'err' ? 'dim' : 'dim'}`;
+  el.style.color = kind === 'err' ? 'var(--danger)' : 'var(--warn)';
+  clearTimeout(jogNoteTimer);
+  jogNoteTimer = setTimeout(() => { el.textContent = ''; }, 4500);
+}
+
+/* ---------------------------------------------------------------- lease */
+
+const ARC_LEN = 2 * Math.PI * 19;
+$('lease-arc').style.strokeDasharray = String(ARC_LEN);
+$('lease-arc').style.strokeDashoffset = String(ARC_LEN);
+
+// Local 1 Hz countdown between heartbeats, so the ring visibly drains
+// instead of jumping every renewal.
+setInterval(() => {
+  if (!lease.held) return;
+  const left = Math.max(0, leaseExpiresAt - Date.now() / 1000);
+  const frac = Math.min(1, left / leaseTtl);
+  $('lease-arc').style.strokeDashoffset = String(ARC_LEN * (1 - frac));
+  $('lease-sub').textContent = `renews automatically · ${left.toFixed(0)}s`;
+}, 1000);
 
 lease.onChange = (state, info) => {
-  const t = $('lease-text');
+  const ring = $('lease-ring');
   if (state === 'held') {
-    const s = info && info.expires_in_s;
-    t.textContent = s ? `held · ${s.toFixed(0)}s` : 'held';
-    t.style.color = 'var(--ok)';
+    if (info) {
+      // Anchor on the local clock: gateways on air-gapped cells have skewed
+      // wall clocks, and expires_at is the gateway's epoch, not ours.
+      leaseTtl = Math.max(5, info.expires_in_s || 30);
+      leaseExpiresAt = Date.now() / 1000 + leaseTtl;
+    }
+    ring.classList.remove('lost');
+    $('lease-title').textContent = 'In control';
+    $('lease-sub').textContent = 'renews automatically';
+    setStatus('sc-lease', 'ok', 'in control');
   } else if (state === 'lost') {
-    t.textContent = 'LOST';
-    t.style.color = 'var(--danger)';
-    // The gateway's watchdog stops motion on a lapsed lease. Say so — the
-    // arm may already be stopping and the operator needs to know why.
+    ring.classList.add('lost');
+    $('lease-arc').style.strokeDashoffset = String(ARC_LEN);
+    $('lease-title').textContent = 'Control LOST';
+    $('lease-sub').textContent = 'the gateway watchdog stops motion';
+    setStatus('sc-lease', 'bad', 'control lost');
+    toast('Control lease lost — the gateway watchdog will stop motion', 'err', true);
     log('control lease lost — the gateway watchdog will stop motion', 'err');
   } else {
-    t.textContent = 'none';
-    t.style.color = '';
+    ring.classList.remove('lost');
+    $('lease-arc').style.strokeDashoffset = String(ARC_LEN);
+    $('lease-title').textContent = 'Observing';
+    $('lease-sub').textContent = 'no control held';
+    setStatus('sc-lease', '', 'observing');
   }
   syncControls();
 };
@@ -79,105 +176,193 @@ $('btn-lease').onclick = async () => {
   }
 };
 
-// --- commanding ----------------------------------------------------------
+/* ---------------------------------------------------------------- status */
 
-$('btn-enable').onclick = () => run('enabled', () => api.enable(true));
-$('btn-disable').onclick = () => run('disabled', () => api.enable(false));
+function setStatus(id, level, text) {
+  for (const cell of [$(id), $(`strip-${id}`)]) {
+    if (!cell) continue;
+    cell.classList.remove('is-ok', 'is-warn', 'is-bad');
+    if (level) cell.classList.add(`is-${level}`);
+    const t = cell.querySelector('span, b');
+    if (text !== undefined && t) t.textContent = text;
+  }
+}
+
+/** The narrow layout hides the header cluster; mirror it into the strip so
+ * a tablet operator is never blind to stream/lease/power state. */
+function buildStatusStrip() {
+  $('status-strip').innerHTML = ['sc-stream', 'sc-lease', 'sc-enable']
+    .map((id) => {
+      const src = $(id);
+      const clone = src.cloneNode(true);
+      clone.id = `strip-${id}`;
+      for (const child of clone.querySelectorAll('[id]')) child.removeAttribute('id');
+      return clone.outerHTML;
+    }).join('');
+}
+
+/* ---------------------------------------------------------------- commands */
+
+const enableSwitch = $('switch-enable');
+
+enableSwitch.onclick = () => {
+  const next = enableSwitch.getAttribute('aria-checked') !== 'true';
+  run(next ? 'enabled arm' : 'disabled arm', () => api.enable(next))
+    .then((r) => {
+      if (r === RUN_FAILED) return;
+      enabledState = next;
+      reflectEnable();
+    });
+};
+
+function reflectEnable() {
+  enableSwitch.setAttribute('aria-checked', String(enabledState === true));
+  $('enable-label').textContent =
+    enabledState === null ? 'Unknown' : enabledState ? 'Enabled' : 'Disabled';
+  setStatus('sc-enable',
+    enabledState ? 'ok' : '',
+    enabledState === null ? 'power —' : enabledState ? 'enabled' : 'disabled');
+}
+
 $('btn-reset').onclick = () => run('reset faults', () => api.resetErrors());
-$('btn-stop').onclick = () => run('STOP', () => api.stop());
+$('fault-banner-reset').onclick = () => run('reset faults', () => api.resetErrors());
+$('btn-stop').onclick = () => run('STOP', () => api.stop(), { priority: true });
 $('btn-trail').onclick = () => view.clearTrail();
+$('btn-view-fit').onclick = () => view.fit();
 
-function jogArgs() {
-  return {
-    step: parseFloat($('in-step').value) || 1,
-    vel: parseFloat($('in-vel').value) || 20,
-  };
+// Esc = stop. The one keyboard shortcut, because reaching for a pointing
+// device mid-surprise is the slow path. Jogging has no keys, deliberately.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  e.preventDefault();
+  if (lease.held && !readOnly) {
+    run('STOP (Esc)', () => api.stop(), { priority: true });
+  } else if (!readOnly) {
+    toast('No control held — take control to stop from here', 'warn');
+  }
+});
+
+/* ---------------------------------------------------------------- jog */
+
+let step = 1;
+const STEPS = [0.5, 1, 5, 10];
+
+function buildStepSeg() {
+  const seg = $('seg-step');
+  for (const s of STEPS) {
+    const b = document.createElement('button');
+    b.textContent = String(s);
+    b.setAttribute('aria-pressed', String(s === step));
+    b.onclick = () => {
+      step = s;
+      for (const x of seg.children) {
+        x.setAttribute('aria-pressed', String(x === b));
+      }
+    };
+    seg.append(b);
+  }
+}
+
+$('in-vel').oninput = () => { $('vel-label').textContent = `${$('in-vel').value}%`; };
+
+function vel() { return parseFloat($('in-vel').value) || 10; }
+
+function jogRow(host, axisLabel, valId, onMinus, onPlus) {
+  const row = document.createElement('div');
+  row.className = 'jog-row';
+  row.innerHTML = `
+    <span class="axis">${axisLabel}</span>
+    <span class="val num" id="${valId}">—</span>
+    <span class="jog-pair">
+      <button class="btn" data-cmd="1" aria-label="${axisLabel} minus">−</button>
+      <button class="btn" data-cmd="1" aria-label="${axisLabel} plus">+</button>
+    </span>`;
+  const [minus, plus] = row.querySelectorAll('button');
+  minus.onclick = onMinus;
+  plus.onclick = onPlus;
+  host.append(row);
 }
 
 function buildJogPads() {
   const pad = $('jogpad');
   pad.innerHTML = '';
   for (let j = 1; j <= 6; j++) {
-    const name = document.createElement('span');
-    name.className = 'name';
-    name.textContent = `J${j}`;
-    const val = document.createElement('span');
-    val.className = 'val';
-    val.id = `jog-val-${j}`;
-    val.textContent = '—';
-    // Gateway direction contract is 0/1 (Fairino wire convention), NOT ±1:
-    // the handler is truthy, so -1 would silently jog POSITIVE.
-    pad.append(name, val, jogBtn('−', j, 0), jogBtn('+', j, 1));
+    // Gateway direction contract is 0/1 (Fairino wire convention), NOT ±1.
+    jogRow(pad, `J${j}`, `jog-val-${j}`,
+      () => run(`jog J${j} −${step}°`, () => api.jog(j, 0, step, vel()), { quiet: true }),
+      () => run(`jog J${j} +${step}°`, () => api.jog(j, 1, step, vel()), { quiet: true }));
   }
-
   const lin = $('jogpad-lin');
   lin.innerHTML = '';
   ['X', 'Y', 'Z', 'RX', 'RY', 'RZ'].forEach((axis, i) => {
-    const name = document.createElement('span');
-    name.className = 'name';
-    name.textContent = axis;
-    const val = document.createElement('span');
-    val.className = 'val';
-    val.id = `lin-val-${i}`;
-    val.textContent = '—';
-    lin.append(name, val, linBtn('−', i + 1, 0), linBtn('+', i + 1, 1));
+    jogRow(lin, axis, `lin-val-${i}`,
+      () => run(`jog ${axis} −${step}`, () => api.jogLinear(i + 1, 0, step, vel()), { quiet: true }),
+      () => run(`jog ${axis} +${step}`, () => api.jogLinear(i + 1, 1, step, vel()), { quiet: true }));
   });
-}
-
-function jogBtn(label, joint, dir) {
-  const b = document.createElement('button');
-  b.textContent = label;
-  b.dataset.cmd = '1';
-  b.onclick = () => {
-    const { step, vel } = jogArgs();
-    run(`jog J${joint} ${dir > 0 ? '+' : '−'}${step}°`,
-        () => api.jog(joint, dir, step, vel));
-  };
-  return b;
-}
-
-function linBtn(label, axis, dir) {
-  const b = document.createElement('button');
-  b.textContent = label;
-  b.dataset.cmd = '1';
-  b.onclick = () => {
-    const { step, vel } = jogArgs();
-    run(`jog axis ${axis} ${dir > 0 ? '+' : '−'}${step}`,
-        () => api.jogLinear(axis, dir, step, vel));
-  };
-  return b;
 }
 
 /**
  * A control that cannot work must look like it cannot work. Without the
- * lease every command returns 423, so the honest thing is to grey them out
- * rather than let the operator discover it one failed press at a time.
+ * lease every command 423s, so grey them out rather than let the operator
+ * discover it one failed press at a time.
  */
 function syncControls() {
   const ready = !readOnly && lease.held && !commanding;
   for (const b of document.querySelectorAll('[data-cmd]')) b.disabled = !ready;
-  $('btn-enable').disabled = !ready;
-  $('btn-disable').disabled = !ready;
+  enableSwitch.disabled = !ready;
   $('btn-reset').disabled = !ready;
+  $('fault-banner-reset').disabled = !ready;
   $('btn-stop').disabled = readOnly || !lease.held;
-  $('btn-lease').disabled = readOnly;
-  $('btn-lease').textContent = readOnly ? 'Read-only'
-    : lease.held ? 'Release control' : 'Take control';
+  $('btn-lease').disabled = readOnly || commanding;
+  const hint = $('jog-hint');
+  if (hint) hint.hidden = ready || readOnly;
+  $('btn-lease').innerHTML = lease.held
+    ? 'Release'
+    : '<svg viewBox="0 0 17 17"><use href="#i-key"/></svg>Take control';
 }
 
-// --- telemetry rendering -------------------------------------------------
+/* ---------------------------------------------------------------- stage */
 
 const view = new View3D($('view'));
 
+/* ---------------------------------------------------------------- charts */
+
+const sparks = [];
+function buildSparks() {
+  const host = $('sparks');
+  const scale = new SharedScale();     // comparable tiles: one shared domain
+  for (let j = 1; j <= 6; j++) {
+    const div = document.createElement('div');
+    host.append(div);
+    sparks.push(new Spark(div, `J${j}`, scale));
+  }
+}
+
+/* ---------------------------------------------------------------- frames */
+
 let frames = 0;
 let rateAt = performance.now();
+let faultShown = false;
 
 stream.onStatus = (s) => {
-  $('stream-dot').className = `dot ${s}`;
-  $('stream-text').textContent = {
-    live: 'live', stale: 'stale', offline: 'gateway offline',
-    'no-robot': 'robot link down',
-  }[s] || s;
+  const map = {
+    live: ['ok', 'live'],
+    stale: ['warn', 'stale'],
+    offline: ['bad', 'gateway offline'],
+    'no-robot': ['bad', 'robot link down'],
+  };
+  const [level, text] = map[s] || ['', s];
+  setStatus('sc-stream', level, text);
+  // Frozen numbers must never pass for live ones: dim every live value and
+  // scrim the stage the moment the stream is not fresh.
+  document.body.dataset.stream = s;
+  const scrim = $('stage-scrim');
+  if (scrim) {
+    scrim.hidden = s === 'live';
+    scrim.textContent = s === 'stale' ? 'TELEMETRY STALE — values frozen'
+      : s === 'no-robot' ? 'ROBOT LINK DOWN — values frozen'
+      : 'GATEWAY OFFLINE — values frozen';
+  }
 };
 
 stream.onFrame = (f) => {
@@ -191,11 +376,19 @@ stream.onFrame = (f) => {
   if (f.limits) lastLimits = f.limits;
   renderJoints(f);
   renderTcp(f);
-  renderStream(f);
+  renderStreamHealth(f);
+  renderFault(f);
+
+  if (f.joint_torque) {
+    for (let i = 0; i < sparks.length && i < f.joint_torque.length; i++) {
+      sparks[i].push(f.joint_torque[i]);
+    }
+  }
 
   if (f.joints) {
-    const frames = model.frames ? model.frames(f.joints) : null;
-    view.setPose(model.points(f.joints, toolOffset), model, frames);
+    if (candidates) lockModel(f);
+    const fr = model.frames ? model.frames(f.joints) : null;
+    view.setPose(model.points(f.joints, toolOffset), model, fr);
     const err = agreement(model, f.joints, f.tcp, toolOffset);
     const v = verdict(err);
     const badge = $('model-badge');
@@ -204,14 +397,69 @@ stream.onFrame = (f) => {
   }
 };
 
+let lockAttempts = 0;
+function lockModel(f) {
+  for (const c of candidates) {
+    const e = agreement(c.model, f.joints, f.tcp, toolOffset);
+    if (e !== null) { c.sum += e; c.n++; }
+  }
+  // Frames without a TCP can never score; after ~5 s stop waiting and go
+  // with the model the controller named, meshes included.
+  if (++lockAttempts > 50 && !candidates.some((c) => c.n > 0)) {
+    candidates = null;
+    $('model-note').textContent = model.note;
+    loadMeshes(model);
+    return;
+  }
+  if (!candidates.some((c) => c.n >= 12)) return;
+  const best = candidates.reduce((a, b) =>
+    (a.sum / (a.n || 1)) <= (b.sum / (b.n || 1)) ? a : b);
+  candidates = null;
+  if (best.model !== model) {
+    model = best.model;
+    view.clearTrail();
+    log(`kinematic model: ${model.label} (measured best fit)`, 'ok');
+  }
+  $('model-note').textContent = model.note;
+  loadMeshes(model);
+}
+
+function loadMeshes(m) {
+  if (!m.meshUrl) return;
+  fetch(m.meshUrl).then((res) => (res.ok ? res.json() : null))
+    .then((data) => { if (data) view.setMeshes(data, m.meshLinks); })
+    .catch(() => {});
+}
+
+let faultCode = '';
+function renderFault(f) {
+  const faulted = Boolean(f.error_main || f.error_sub);
+  const code = `${f.error_main}/${f.error_sub}`;
+  if (faulted && (!faultShown || code !== faultCode)) {
+    faultCode = code;
+    $('fault-banner-text').innerHTML =
+      `<b>Controller fault</b> — main ${f.error_main}, sub ${f.error_sub}. ` +
+      `<a href="#faults" style="color:inherit">Open the Faults tab</a> for the code table.`;
+    $('fault-banner').classList.add('show');
+    setStatus('sc-robot', 'bad');
+    faultShown = true;
+  } else if (!faulted && faultShown) {
+    $('fault-banner').classList.remove('show');
+    setStatus('sc-robot', '');
+    faultShown = false;
+    log('fault cleared', 'ok');
+  }
+}
+
 function renderJoints(f) {
   const body = $('tbl-joints');
   const j = f.joints || [];
   if (body.childElementCount !== j.length) {
-    body.innerHTML = j.map((_, i) =>
-      `<tr><td>J${i + 1}</td><td id="jt-a-${i}"></td><td id="jt-mn-${i}" class="muted"></td>
-       <td id="jt-mx-${i}" class="muted"></td><td id="jt-h-${i}"></td><td id="jt-t-${i}"></td></tr>`
-    ).join('');
+    body.innerHTML = j.map((_, i) => `
+      <tr><td>J${i + 1}</td><td id="jt-a-${i}"></td>
+      <td id="jt-h-${i}" class="small dim"></td>
+      <td style="width:70px"><div class="bar" id="jt-b-${i}"><i></i></div></td>
+      <td id="jt-t-${i}"></td></tr>`).join('');
   }
   j.forEach((angle, i) => {
     $(`jt-a-${i}`).textContent = angle.toFixed(2);
@@ -221,14 +469,13 @@ function renderJoints(f) {
     const lim = lastLimits && lastLimits[i];
     if (lim) {
       const [mn, mx] = lim;
-      $(`jt-mn-${i}`).textContent = mn.toFixed(0);
-      $(`jt-mx-${i}`).textContent = mx.toFixed(0);
       const head = Math.min(angle - mn, mx - angle);
-      const cell = $(`jt-h-${i}`);
-      cell.textContent = `${head.toFixed(1)}°`;
-      // Colour is the whole point: it turns a number into a warning.
-      cell.style.color = head < 5 ? 'var(--danger)'
-        : head < 20 ? 'var(--warn)' : '';
+      const span = (mx - mn) / 2;
+      $(`jt-h-${i}`).textContent = `${head.toFixed(1)}°`;
+      const bar = $(`jt-b-${i}`);
+      bar.className = `bar ${head < 5 ? 'bad' : head < 20 ? 'warn' : ''}`;
+      bar.firstElementChild.style.width =
+        `${Math.max(2, Math.min(100, (head / span) * 100))}%`;
     }
     const tq = f.joint_torque && f.joint_torque[i];
     if (tq !== undefined) $(`jt-t-${i}`).textContent = tq.toFixed(3);
@@ -254,85 +501,138 @@ function renderTcp(f) {
   });
 }
 
-function renderStream(f) {
+const healthDds = {};
+function renderStreamHealth(f) {
   const rows = [
-    ['robot link', f.connected ? 'up' : 'DOWN'],
-    ['frames', f.frames],
-    ['bad checksum', f.bad_checksum],
-    ['frame counter', f.counter],
-    ['program state', f.program_state],
-    ['fault', f.error_main || f.error_sub ? `main ${f.error_main}, sub ${f.error_sub}` : 'none'],
+    ['Robot link', f.connected ? 'up' : 'DOWN', !f.connected],
+    ['Frames', f.frames, false],
+    ['Bad checksum', f.bad_checksum, f.bad_checksum > 0],
+    ['Counter', f.counter, false],
+    ['Program state', f.program_state, false],
   ];
-  $('tbl-stream').innerHTML = rows.map(([k, v]) => {
-    const bad = (k === 'robot link' && !f.connected)
-      || (k === 'bad checksum' && v > 0)
-      || (k === 'fault' && v !== 'none');
-    return `<tr><td class="muted">${k}</td><td${bad ? ' style="color:var(--danger)"' : ''}>${v}</td></tr>`;
-  }).join('');
+  const kv = $('kv-stream');
+  if (!kv.childElementCount) {
+    for (const [k] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = k;
+      const dd = document.createElement('dd');
+      kv.append(dt, dd);
+      healthDds[k] = dd;
+    }
+  }
+  for (const [k, v, bad] of rows) {
+    const dd = healthDds[k];
+    dd.textContent = String(v);
+    dd.classList.toggle('bad', Boolean(bad));
+  }
 }
 
-// --- tabs ----------------------------------------------------------------
+/* ---------------------------------------------------------------- tabs */
 
 const TABS = [
-  ['operate', 'Operate'],
-  ['faults', 'Faults'],
-  ['programs', 'Programs'],
-  ['io', 'I/O'],
-  ['force', 'Force'],
-  ['capabilities', 'Capabilities'],
-  ['audit', 'Audit'],
+  ['operate', 'Operate', 'i-operate'],
+  ['faults', 'Faults', 'i-fault'],
+  ['programs', 'Programs', 'i-program'],
+  ['io', 'I/O', 'i-io'],
+  ['force', 'Force', 'i-force'],
+  ['capabilities', 'Capabilities', 'i-caps'],
+  ['audit', 'Audit', 'i-audit'],
 ];
 
 const loaded = new Set(['operate']);
+let currentTab = null;
 
-function selectTab(id) {
+function selectTab(id, push = true) {
+  if (!TABS.some(([t]) => t === id)) id = 'operate';
+  if (id === currentTab && !push) return;   // hash echo of our own push
+  currentTab = id;
   for (const [tid] of TABS) {
     const btn = document.querySelector(`nav button[data-tab="${tid}"]`);
     const sec = document.querySelector(`section[data-tab="${tid}"]`);
     const on = tid === id;
     btn.setAttribute('aria-selected', String(on));
+    btn.tabIndex = on ? 0 : -1;
     sec.hidden = !on;
   }
-  location.hash = id;
+  if (push && location.hash.slice(1) !== id) location.hash = id;
   if (!loaded.has(id) && PANELS[id]) {
     loaded.add(id);
-    PANELS[id](document.querySelector(`section[data-tab="${id}"]`), api, log);
+    PANELS[id](document.querySelector(`section[data-tab="${id}"]`), api, log, toast);
+    syncControls();   // panel buttons carry data-cmd; gate them immediately
   } else if (PANELS[id] && PANELS[id].refresh) {
     PANELS[id].refresh();
   }
 }
 
+window.addEventListener('hashchange', () => selectTab(location.hash.slice(1), false));
+
 function buildTabs() {
   const nav = $('tabs');
-  for (const [id, label] of TABS) {
+  for (const [id, label, icon] of TABS) {
     const b = document.createElement('button');
-    b.textContent = label;
+    b.innerHTML = `<svg viewBox="0 0 17 17"><use href="#${icon}"/></svg>${label}`;
     b.dataset.tab = id;
+    b.id = `tab-${id}`;
     b.setAttribute('role', 'tab');
+    b.setAttribute('aria-controls', `panel-${id}`);
     b.onclick = () => selectTab(id);
     nav.append(b);
+    const sec = document.querySelector(`section[data-tab="${id}"]`);
+    sec.id = `panel-${id}`;
+    sec.setAttribute('role', 'tabpanel');
+    sec.setAttribute('aria-labelledby', `tab-${id}`);
   }
+  nav.addEventListener('keydown', (e) => {
+    const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    if (!(e.key in keys) && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const ids = TABS.map(([t]) => t);
+    let i = ids.indexOf(currentTab);
+    i = e.key === 'Home' ? 0 : e.key === 'End' ? ids.length - 1
+      : (i + keys[e.key] + ids.length) % ids.length;
+    selectTab(ids[i]);
+    document.querySelector(`nav button[data-tab="${ids[i]}"]`).focus();
+  });
+  const foot = document.createElement('div');
+  foot.className = 'rail-foot';
+  foot.innerHTML = `
+    <button class="btn btn-ghost btn-sm" id="btn-theme" title="Theme">
+      <svg viewBox="0 0 17 17"><use href="#i-theme"/></svg>
+      <span id="theme-label"></span>
+    </button>`;
+  nav.append(foot);
+  $('btn-theme').onclick = () => {
+    const next = THEMES[(THEMES.indexOf(themePref()) + 1) % THEMES.length];
+    applyTheme(next);
+  };
 }
 
-// --- boot ----------------------------------------------------------------
+/* ---------------------------------------------------------------- boot */
 
 async function boot() {
   buildTabs();
+  buildStatusStrip();
+  buildStepSeg();
   buildJogPads();
+  buildSparks();
+  reflectEnable();
   syncControls();
+  applyTheme(themePref());
 
   try {
     const d = await api.get('/');
     if (d && d.read_only) {
       readOnly = true;
       const banner = document.createElement('div');
-      banner.className = 'notice';
-      banner.style.marginBottom = '14px';
-      banner.innerHTML = '<b>Read-only gateway.</b> This console is '
-        + 'observing a live robot and cannot command it — not even stop. '
-        + 'The physical E-stop is the only stop.';
+      banner.className = 'banner warn';
+      banner.innerHTML = `
+        <svg viewBox="0 0 17 17"><use href="#i-eye"/></svg>
+        <span><b>Read-only gateway.</b> Observing a live robot; nothing can be
+        commanded from here — not even stop. The physical E-stop is the only
+        stop.</span>`;
       const section = document.querySelector('section[data-tab="operate"]');
       section.insertBefore(banner, section.firstChild);
+      setStatus('sc-lease', 'warn', 'read-only');
       log('gateway is read-only: commanding is disabled', 'warn');
       syncControls();
     }
@@ -340,24 +640,17 @@ async function boot() {
 
   try {
     const r = await api.robot();
-    $('robot-model').textContent = r.model || 'unknown';
-    $('robot-sw').textContent = r.software ? ` · ${r.software}` : '';
-    model = modelFor(r.model);
-    $('model-note').textContent = `${model.label} — ${model.note}`;
+    $('sc-robot-name').textContent = r.model || 'unknown robot';
     log(`connected to ${r.model} (${r.software})`, 'ok');
-
-    if (model.meshUrl) {
-      // Vendor link meshes (frcobot_description, Apache 2.0), served from
-      // this package. Failure is cosmetic: the skeleton draws instead.
-      fetch(model.meshUrl).then((res) => res.ok ? res.json() : null)
-        .then((data) => {
-          if (data) view.setMeshes(data, model.meshLinks);
-        })
-        .catch(() => {});
-    }
+    const named = modelFor(r.model);
+    const set = named === MODELS.sim ? [MODELS.sim] : [named, MODELS.sim];
+    candidates = set.map((m) => ({ model: m, sum: 0, n: 0 }));
+    model = named;
+    $('model-note').textContent = 'identifying kinematic model…';
   } catch (e) {
+    $('sc-robot-name').textContent = 'no controller';
     log(`cannot identify controller: ${e.message}`, 'err');
-    $('model-note').textContent = `${model.label} — ${model.note}`;
+    $('model-note').textContent = model.note;
   }
 
   try {
@@ -366,9 +659,6 @@ async function boot() {
   } catch { /* the stream carries limits too */ }
 
   try {
-    // The controller's reported TCP includes the active tool transform; the
-    // drawn tip must include it too or the agreement badge blames the model
-    // for the tool.
     const t = await api.get('/api/v1/frames/tool');
     if (t && t.offset) {
       toolOffset = t.offset;
@@ -377,13 +667,11 @@ async function boot() {
   } catch { /* no tool info: draw to the flange */ }
 
   stream.connect();
-  selectTab(location.hash.slice(1) || 'operate');
+  selectTab(location.hash.slice(1) || 'operate', false);
 
-  // No release-on-unload: sendBeacon cannot carry the X-FWS-Control-Token
-  // header, and an async DELETE from a closing page is not guaranteed to
-  // arrive. A closed tab simply stops heartbeating and the lease lapses
-  // within its TTL -- which is exactly the failure mode the gateway's
-  // watchdog exists to handle.
+  // No release-on-unload: sendBeacon cannot carry the control-token header,
+  // and a closed tab simply stops heartbeating — the lease lapses within its
+  // TTL, which is exactly the failure mode the gateway watchdog handles.
 }
 
 boot();
