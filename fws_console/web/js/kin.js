@@ -125,8 +125,8 @@ export const MODELS = {
       return out;
     },
 
-    points(joints, toolOffset) {
-      const fr = this.frames(joints);
+    points(joints, toolOffset, precomputedFrames) {
+      const fr = precomputedFrames || this.frames(joints);
       const pts = fr.map((f) => f.p);
       const last = fr[fr.length - 1];
       let tip = apply(last.R, this.flange);

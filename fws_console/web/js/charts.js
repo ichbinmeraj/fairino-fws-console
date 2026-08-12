@@ -81,7 +81,9 @@ export class Spark {
   }
 
   _resize() {
-    const dpr = window.devicePixelRatio || 1;
+    // Tiles are 24px tall with no text: dpr 1 is indistinguishable and
+    // divides the pixels pushed per redraw by dpr^2.
+    const dpr = 1;
     const r = this.canvas.getBoundingClientRect();
     if (!r.width) return;
     this.canvas.width = Math.round(r.width * dpr);
@@ -92,7 +94,9 @@ export class Spark {
     this.draw();
   }
 
-  push(value) {
+  /** Store a sample without painting: history stays complete even while
+   * the tile is off-screen; the shell decides when drawing is worth it. */
+  record(value) {
     const now = performance.now() / 1000;
     this.t.push(now);
     this.v.push(value);
@@ -106,6 +110,10 @@ export class Spark {
     let m = 0;
     for (const v of this.v) { const a = Math.abs(v); if (a > m) m = a; }
     this._absMax = m;
+  }
+
+  push(value) {
+    this.record(value);
     this.draw();
   }
 

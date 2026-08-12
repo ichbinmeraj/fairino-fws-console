@@ -343,6 +343,9 @@ function buildSparks() {
 let frames = 0;
 let rateAt = performance.now();
 let faultShown = false;
+let pendingFrame = null;
+let renderQueued = false;
+const operateSection = document.querySelector('section[data-tab="operate"]');
 
 stream.onStatus = (s) => {
   const map = {
@@ -365,37 +368,64 @@ stream.onStatus = (s) => {
   }
 };
 
+// Frame handling is split: the WebSocket callback does only the cheap,
+// always-required work (state capture, fault detection, chart history,
+// model scoring), and everything that paints runs in ONE rAF pass. rAF
+// does not fire in hidden browser tabs, so a backgrounded console costs
+// nearly nothing; when another panel is selected, the heavy Operate
+// rendering is skipped while annunciators and the fault banner stay live.
 stream.onFrame = (f) => {
   frames++;
+  pendingFrame = f;
+  if (f.limits) lastLimits = f.limits;
+  renderFault(f);                          // safety surface: always current
+  if (f.joints && candidates) lockModel(f);
+  if (f.joint_torque) {
+    for (let i = 0; i < sparks.length && i < f.joint_torque.length; i++) {
+      sparks[i].record(f.joint_torque[i]); // history complete even off-screen
+    }
+  }
+  if (!renderQueued) {
+    renderQueued = true;
+    requestAnimationFrame(renderTick);
+  }
+};
+
+function renderTick() {
+  renderQueued = false;
+  const f = pendingFrame;
+  if (!f) return;
+
   const now = performance.now();
   if (now - rateAt > 1000) {
     $('stream-rate').textContent = `${(frames * 1000 / (now - rateAt)).toFixed(1)} Hz`;
     frames = 0; rateAt = now;
   }
 
-  if (f.limits) lastLimits = f.limits;
+  if (operateSection.hidden) return;       // another panel is on screen
+
   renderJoints(f);
   renderTcp(f);
   renderStreamHealth(f);
-  renderFault(f);
-
-  if (f.joint_torque) {
-    for (let i = 0; i < sparks.length && i < f.joint_torque.length; i++) {
-      sparks[i].push(f.joint_torque[i]);
-    }
-  }
+  for (const sp of sparks) sp.draw();
 
   if (f.joints) {
-    if (candidates) lockModel(f);
+    // One FK per frame: frames() feeds the meshes, the skeleton points and
+    // the badge comparison alike.
     const fr = model.frames ? model.frames(f.joints) : null;
-    view.setPose(model.points(f.joints, toolOffset), model, fr);
-    const err = agreement(model, f.joints, f.tcp, toolOffset);
+    const pts = model.points(f.joints, toolOffset, fr);
+    view.setPose(pts, model, fr);
+    let err = null;
+    if (f.tcp) {
+      const tip = pts[pts.length - 1];
+      err = Math.hypot(tip[0] - f.tcp[0], tip[1] - f.tcp[1], tip[2] - f.tcp[2]);
+    }
     const v = verdict(err);
     const badge = $('model-badge');
     badge.textContent = v.text;
     badge.className = `tag ${v.level === 'ok' ? 'ok' : v.level === 'warn' ? 'warn' : v.level === 'bad' ? 'bad' : ''}`;
   }
-};
+}
 
 let lockAttempts = 0;
 function lockModel(f) {
@@ -548,6 +578,10 @@ function selectTab(id, push = true) {
     sec.hidden = !on;
   }
   if (push && location.hash.slice(1) !== id) location.hash = id;
+  if (id === 'operate' && pendingFrame && !renderQueued) {
+    renderQueued = true;
+    requestAnimationFrame(renderTick);
+  }
   if (!loaded.has(id) && PANELS[id]) {
     loaded.add(id);
     PANELS[id](document.querySelector(`section[data-tab="${id}"]`), api, log, toast);
