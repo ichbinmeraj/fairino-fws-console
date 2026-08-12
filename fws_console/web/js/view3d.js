@@ -68,11 +68,14 @@ export class View3D {
     this.frames = null;   // per-link {R, p} world transforms, for meshes
     this.meshes = null;   // per-link {v: Float64Array, f: Uint16Array}
     this.trail = [];
-    // Camera pivot, set ONLY by fit(): the view must never move on its own.
-    // A pivot that follows the pose makes the scene bob while the arm jogs,
-    // and a pivot at the world origin makes orbiting sweep a displaced arm
-    // across the screen instead of turning around it.
+    // Camera pivot + screen pan. The pivot never moves on its own (a pivot
+    // that follows the pose makes the scene bob while the arm jogs), but a
+    // drag RE-TARGETS it to the arm's current centre at the moment of grab,
+    // with pan/dist compensated so the image does not jump — so orbiting
+    // always turns around the arm wherever it has wandered since the last
+    // fit. fit() clears the pan.
     this.tx = 0; this.ty = 0; this.zc = 0;
+    this.panX = 0; this.panY = 0;
 
     this._bindOrbit();
     this._resize();
@@ -106,6 +109,7 @@ export class View3D {
 
     this.c.addEventListener('pointerdown', (e) => {
       this.c.setPointerCapture(e.pointerId);
+      if (active.size === 0) this._retarget();
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
         const [a, b] = [...active.values()];
@@ -142,6 +146,28 @@ export class View3D {
     }, { passive: false });
   }
 
+  /** Move the orbit pivot to the arm's current centre without letting the
+   * image jump: the pivot point keeps its exact screen position (pan) and
+   * apparent depth (dist), so the grab is seamless and the rotation that
+   * follows turns around the arm as it stands NOW. */
+  _retarget() {
+    if (!this.points || !this.points.length) return;
+    this._projSetup();
+    let xlo = Infinity, xhi = -Infinity, ylo = Infinity, yhi = -Infinity,
+        zlo = Infinity, zhi = -Infinity;
+    for (const q of this.points) {
+      if (q[0] < xlo) xlo = q[0]; if (q[0] > xhi) xhi = q[0];
+      if (q[1] < ylo) ylo = q[1]; if (q[1] > yhi) yhi = q[1];
+      if (q[2] < zlo) zlo = q[2]; if (q[2] > zhi) zhi = q[2];
+    }
+    const c = [(xlo + xhi) / 2, (ylo + yhi) / 2, (zlo + zhi) / 2];
+    const [csx, csy, cdepth] = this.project(c);
+    this.tx = c[0]; this.ty = c[1]; this.zc = c[2];
+    this.dist = Math.max(700, Math.min(5000, this.dist + cdepth));
+    this.panX = csx - this.w / 2;
+    this.panY = csy - this.h / 2;
+  }
+
   /** Frame the whole arm: reset the orbit, then solve for the camera
    * distance at which every point of the pose actually fits on screen with
    * a margin — projected, not guessed from a bounding sphere. */
@@ -149,6 +175,7 @@ export class View3D {
     this.yaw = -35 * Math.PI / 180;
     this.pitch = 22 * Math.PI / 180;
     this._projSetup();
+    this.panX = 0; this.panY = 0;
     if (this.points && this.points.length) {
       // The pivot is the centre of what is being framed — pose plus the
       // base, so the grid origin stays in view.
@@ -201,7 +228,8 @@ export class View3D {
     const z2 = y1 * this._sp + z1 * this._cp;
     const s = this._f / (this.dist + y2);
 
-    return [this.w / 2 + x1 * s, this.h / 2 - z2 * s, y2];
+    return [this.w / 2 + this.panX + x1 * s,
+            this.h / 2 + this.panY - z2 * s, y2];
   }
 
   /**
@@ -337,7 +365,7 @@ export class View3D {
         ph += p[0] * (i * 3 + 1) + p[1] * (i * 3 + 2) + p[2] * (i * 3 + 3);
       }
     }
-    const sig = `${this.yaw},${this.pitch},${this.dist},${this.tx},${this.ty},${this.zc},${this.w},`
+    const sig = `${this.yaw},${this.pitch},${this.dist},${this.tx},${this.ty},${this.zc},${this.panX},${this.panY},${this.w},`
       + `${this.h},${!this.points},${ph},${this.trail.length},`
       + `${this._gen || 0},${this._isDark()}`;
     if (sig === this._sig) return;
@@ -435,7 +463,8 @@ export class View3D {
     const cyw = Math.cos(this.yaw), syw = Math.sin(this.yaw);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     const foc = Math.min(this.w, this.h) * 2.2;
-    const hw = this.w / 2, hh = this.h / 2, zc = this.zc, dist = this.dist;
+    const hw = this.w / 2 + this.panX, hh = this.h / 2 + this.panY;
+    const zc = this.zc, dist = this.dist;
     const tx = this.tx, ty = this.ty;
 
     // Fixed key light from over the operator's left shoulder, plus the
