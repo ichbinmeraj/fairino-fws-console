@@ -68,7 +68,11 @@ export class View3D {
     this.frames = null;   // per-link {R, p} world transforms, for meshes
     this.meshes = null;   // per-link {v: Float64Array, f: Uint16Array}
     this.trail = [];
-    this.zc = 0;      // vertical centre, follows the pose (smoothed)
+    // Camera pivot, set ONLY by fit(): the view must never move on its own.
+    // A pivot that follows the pose makes the scene bob while the arm jogs,
+    // and a pivot at the world origin makes orbiting sweep a displaced arm
+    // across the screen instead of turning around it.
+    this.tx = 0; this.ty = 0; this.zc = 0;
 
     this._bindOrbit();
     this._resize();
@@ -146,9 +150,17 @@ export class View3D {
     this.pitch = 22 * Math.PI / 180;
     this._projSetup();
     if (this.points && this.points.length) {
-      // stop the vertical centre drifting after the fit is computed
-      const zs = this.points.map((p) => p[2]).concat([0]);
-      this.zc = (Math.min(...zs) + Math.max(...zs)) / 2;
+      // The pivot is the centre of what is being framed — pose plus the
+      // base, so the grid origin stays in view.
+      let xlo = 0, xhi = 0, ylo = 0, yhi = 0, zlo = 0, zhi = 0;
+      for (const q of this.points) {
+        if (q[0] < xlo) xlo = q[0]; if (q[0] > xhi) xhi = q[0];
+        if (q[1] < ylo) ylo = q[1]; if (q[1] > yhi) yhi = q[1];
+        if (q[2] < zlo) zlo = q[2]; if (q[2] > zhi) zhi = q[2];
+      }
+      this.tx = (xlo + xhi) / 2;
+      this.ty = (ylo + yhi) / 2;
+      this.zc = (zlo + zhi) / 2;
 
       this.dist = 2000;
       for (let pass = 0; pass < 3; pass++) {
@@ -180,8 +192,9 @@ export class View3D {
   /** World (mm, z up) -> screen. Returns [x, y, depth]. Requires _projSetup
    * to have run this draw (draw() and fit() both do). */
   project(p) {
-    const x1 = p[0] * this._cy - p[1] * this._sy;
-    const y1 = p[0] * this._sy + p[1] * this._cy;
+    const x0 = p[0] - this.tx, y0 = p[1] - this.ty;
+    const x1 = x0 * this._cy - y0 * this._sy;
+    const y1 = x0 * this._sy + y0 * this._cy;
     const z1 = p[2] - this.zc;
 
     const y2 = y1 * this._cp - z1 * this._sp;   // depth toward the camera
@@ -228,14 +241,6 @@ export class View3D {
     this.model = model;
     this.frames = frames || null;
     if (points) {
-      // Follow the arm vertically, slowly, so the view neither jumps per
-      // frame nor loses an arm working entirely below the base plane.
-      // Snap once close: an asymptotic zc would change every frame forever
-      // and defeat the identical-frame skip in draw().
-      const zs = points.map((p) => p[2]).concat([0]);   // keep the grid in view
-      const target = (Math.min(...zs) + Math.max(...zs)) / 2;
-      const dz = target - this.zc;
-      this.zc += Math.abs(dz) < 0.05 ? dz : dz * 0.08;
       const tip = points[points.length - 1];
       const last = this.trail[this.trail.length - 1];
       if (!last || Math.hypot(tip[0] - last[0], tip[1] - last[1], tip[2] - last[2]) > 3) {
@@ -332,7 +337,7 @@ export class View3D {
         ph += p[0] * (i * 3 + 1) + p[1] * (i * 3 + 2) + p[2] * (i * 3 + 3);
       }
     }
-    const sig = `${this.yaw},${this.pitch},${this.dist},${this.zc},${this.w},`
+    const sig = `${this.yaw},${this.pitch},${this.dist},${this.tx},${this.ty},${this.zc},${this.w},`
       + `${this.h},${!this.points},${ph},${this.trail.length},`
       + `${this._gen || 0},${this._isDark()}`;
     if (sig === this._sig) return;
@@ -431,6 +436,7 @@ export class View3D {
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     const foc = Math.min(this.w, this.h) * 2.2;
     const hw = this.w / 2, hh = this.h / 2, zc = this.zc, dist = this.dist;
+    const tx = this.tx, ty = this.ty;
 
     // Fixed key light from over the operator's left shoulder, plus the
     // light/view half-vector for the specular term.
@@ -460,8 +466,8 @@ export class View3D {
         const wx = r00 * x + r01 * y + r02 * z + px;
         const wy = r10 * x + r11 * y + r12 * z + py;
         const wz = r20 * x + r21 * y + r22 * z + pz;
-        const x1 = wx * cyw - wy * syw;
-        const y1 = wx * syw + wy * cyw;
+        const x1 = (wx - tx) * cyw - (wy - ty) * syw;
+        const y1 = (wx - tx) * syw + (wy - ty) * cyw;
         const z1 = wz - zc;
         const y2 = y1 * cp - z1 * sp;
         const sc = foc / (dist + y2);
