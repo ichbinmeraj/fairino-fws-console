@@ -31,6 +31,17 @@ def configure_app(app, settings) -> None:
 
     app.mount(MOUNT, StaticFiles(directory=WEB, html=True), name="console")
 
+    # no-cache means "revalidate every load", not "never cache": unchanged
+    # files still answer 304. Without it browsers serve the ES modules from
+    # heuristic cache indefinitely, and a console update leaves an operator
+    # running new HTML against old JavaScript — a broken, half-updated UI.
+    @app.middleware("http")
+    async def _console_revalidate(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith(MOUNT):
+            response.headers.setdefault("cache-control", "no-cache")
+        return response
+
     port = settings.server.port
     print(f"  console          http://localhost:{port}{MOUNT}/", flush=True)
 

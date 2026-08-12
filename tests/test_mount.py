@@ -74,3 +74,19 @@ class TestAssets:
             for hit in re.findall(r'https?://[^\s"\')<>]+', f.read_text()):
                 offenders.append(f"{f.name}: {hit}")
         assert not offenders, offenders
+
+
+class TestCaching:
+    def test_console_assets_demand_revalidation(self):
+        """no-cache on everything under the mount: a stale ES module against
+        fresh HTML is a broken console, and browsers cache heuristically
+        without it. Unchanged files still answer 304, so this stays cheap."""
+        client = make_app()
+        for path in (f"{MOUNT}/", f"{MOUNT}/js/main.js", f"{MOUNT}/css/app.css"):
+            r = client.get(path)
+            assert r.headers.get("cache-control") == "no-cache", path
+
+    def test_the_api_is_not_touched(self):
+        r = make_app().get("/")
+        assert "cache-control" not in r.headers or \
+            r.headers["cache-control"] != "no-cache"
