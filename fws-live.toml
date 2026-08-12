@@ -1,0 +1,9 @@
+# Live-robot session config. Commanding ENABLED — clear the cell before
+# jogging or running programs; the console Stop is functional, not an E-stop.
+
+[features]
+# Exposes the generated command registry (GET /api/v1/commands,
+# POST /api/v1/invoke/<name>). Used to query the controller's own
+# GetForwardKin for the 3D-model fit — pure computation, moves nothing.
+# Refused commands (firmware writes, shutdown, introspection) stay refused.
+enable_command_passthrough = true

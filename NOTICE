@@ -1,0 +1,8 @@
+FWS Console
+Copyright 2026 Meraj Safari
+
+This product includes simplified 3D link meshes for the FAIRINO FR5 derived
+from the collision meshes in FAIR-INNOVATION's frcobot_ros repository
+(frcobot_description package, https://github.com/FAIR-INNOVATION/frcobot_ros),
+licensed under the Apache License 2.0. The meshes were decimated for in-
+browser rendering; geometry otherwise unchanged.

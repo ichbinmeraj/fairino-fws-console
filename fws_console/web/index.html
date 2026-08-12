@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FWS Console</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header>
+  <span class="brand">FWS <small>console</small></span>
+
+  <span class="pill" id="p-stream" title="Telemetry stream">
+    <i class="dot" id="stream-dot"></i><span id="stream-text">connecting…</span>
+  </span>
+
+  <span class="pill" id="p-robot" title="Controller identity">
+    <b id="robot-model">—</b><span id="robot-sw"></span>
+  </span>
+
+  <span class="pill" id="p-lease" title="Control lease">
+    lease <b id="lease-text">none</b>
+  </span>
+
+  <span class="spacer"></span>
+
+  <button id="btn-stop" class="btn-danger" disabled>Stop</button>
+</header>
+
+<nav id="tabs" role="tablist"></nav>
+
+<main>
+  <!-- Operate ------------------------------------------------------------ -->
+  <section data-tab="operate">
+    <div class="notice danger" style="margin-bottom:14px">
+      <b>Stop is a functional stop, not an emergency stop.</b>
+      Nothing in this console is a safety-rated function. Keep a hand on the
+      physical E-stop whenever the arm is enabled.
+    </div>
+
+    <div class="grid wide">
+      <div class="card">
+        <h2>
+          Arm
+          <span class="spacer"></span>
+          <span class="tag" id="model-badge" title="Model agreement with the controller's reported TCP">—</span>
+          <button id="btn-trail" class="small" style="padding:3px 9px">clear trail</button>
+        </h2>
+        <canvas id="view"></canvas>
+        <div class="small muted" id="model-note" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <h2>Control</h2>
+        <div class="row" style="margin-bottom:12px">
+          <button id="btn-lease" class="btn-primary">Take control</button>
+          <button id="btn-enable" disabled>Enable</button>
+          <button id="btn-disable" disabled>Disable</button>
+          <button id="btn-reset" disabled>Reset faults</button>
+        </div>
+
+        <div class="row" style="margin-bottom:10px">
+          <label class="field" style="flex:1">Step (deg / mm)
+            <input id="in-step" type="number" value="5" min="0.1" max="15" step="0.5">
+          </label>
+          <label class="field" style="flex:1">Velocity (%)
+            <input id="in-vel" type="number" value="30" min="1" max="100" step="5">
+          </label>
+        </div>
+
+        <div class="jogpad" id="jogpad"></div>
+
+        <h2 style="margin-top:16px">Cartesian</h2>
+        <div class="jogpad" id="jogpad-lin"></div>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:14px">
+      <div class="card">
+        <h2>Joints <span class="spacer"></span><span class="small muted" id="joint-hint"></span></h2>
+        <table><thead><tr>
+          <th>Joint</th><th>Angle</th><th>Min</th><th>Max</th><th>Headroom</th><th>Torque</th>
+        </tr></thead><tbody id="tbl-joints"></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>TCP &amp; force</h2>
+        <table><thead><tr>
+          <th>Axis</th><th>Pose</th><th>Force / torque</th>
+        </tr></thead><tbody id="tbl-tcp"></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>Stream <span class="spacer"></span><span class="small muted" id="stream-rate"></span></h2>
+        <table><tbody id="tbl-stream"></tbody></table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Activity</h2>
+      <div id="log"></div>
+    </div>
+  </section>
+
+  <section data-tab="faults" hidden></section>
+  <section data-tab="programs" hidden></section>
+  <section data-tab="io" hidden></section>
+  <section data-tab="force" hidden></section>
+  <section data-tab="capabilities" hidden></section>
+  <section data-tab="audit" hidden></section>
+</main>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

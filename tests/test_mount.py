@@ -1,0 +1,76 @@
+"""The console is a mount, and only a mount.
+
+These tests pin the whole contract this package has with the gateway: given
+an application and settings, configure_app adds a static mount at /console
+and changes nothing else.
+"""
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from fws_console import MOUNT, WEB, configure_app
+
+
+def make_app() -> TestClient:
+    app = FastAPI()
+
+    @app.get("/")
+    def index():
+        return {"service": "fws"}
+
+    settings = SimpleNamespace(server=SimpleNamespace(port=8000))
+    configure_app(app, settings)
+    return TestClient(app)
+
+
+class TestMount:
+    def test_serves_the_console_at_slash_console(self):
+        r = make_app().get(f"{MOUNT}/")
+        assert r.status_code == 200
+        assert "FWS Console" in r.text
+
+    def test_serves_every_asset_the_page_references(self):
+        """Every src/href in index.html resolves. A page that references a
+        missing module dies at import time with a blank screen."""
+        client = make_app()
+        html = (WEB / "index.html").read_text()
+        import re
+        refs = re.findall(r'(?:src|href)="([^"]+)"', html)
+        assert refs, "index.html references no assets at all?"
+        for ref in refs:
+            assert client.get(f"{MOUNT}/{ref}").status_code == 200, ref
+
+    def test_es_module_imports_resolve(self):
+        """Same, one level down: every import in every JS module exists."""
+        import re
+        js_dir = WEB / "js"
+        for mod in js_dir.glob("*.js"):
+            for target in re.findall(r"from\s+'\./([\w.]+)'", mod.read_text()):
+                missing = f"{mod.name} imports missing {target}"
+                assert (js_dir / target).is_file(), missing
+
+    def test_does_not_shadow_the_root(self):
+        r = make_app().get("/")
+        assert r.json() == {"service": "fws"}
+
+    def test_mounts_nothing_outside_console(self):
+        client = make_app()
+        assert client.get("/index.html").status_code == 404
+        assert client.get("/js/main.js").status_code == 404
+
+
+class TestAssets:
+    def test_no_external_urls_anywhere(self):
+        """No CDN, no fonts, no analytics. A robot cell may be air-gapped,
+        and every byte the console needs must ship in the wheel."""
+        import re
+        offenders = []
+        for f in WEB.rglob("*"):
+            if f.suffix not in (".html", ".css", ".js"):
+                continue
+            for hit in re.findall(r'https?://[^\s"\')<>]+', f.read_text()):
+                offenders.append(f"{f.name}: {hit}")
+        assert not offenders, offenders

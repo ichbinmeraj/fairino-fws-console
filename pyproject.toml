@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fairino-fws-console"
+version = "0.1.0a0"
+description = "Operator console for FWS, the Fairino robot gateway"
+authors = [{ name = "Meraj Safari" }]
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+keywords = ["fairino", "robot", "cobot", "robotics", "console", "ui", "fws"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Manufacturing",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Human Machine Interfaces",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: FastAPI",
+]
+
+# The console is served by the gateway it depends on. It adds no runtime
+# dependency of its own: the browser assets are plain ES modules with no
+# bundler, no framework and no CDN, because a robot cell may have no route to
+# the internet at all.
+#
+# >=0.1.0a1: the first gateway release whose cli.main() accepts the
+# configure_app hook this package mounts through. 0.1.0a0 predates it.
+dependencies = [
+  "fairino-fws>=0.1.0a1",
+]
+
+[project.urls]
+Homepage = "https://github.com/ichbinmeraj/fws-console"
+Repository = "https://github.com/ichbinmeraj/fws-console"
+Issues = "https://github.com/ichbinmeraj/fws-console/issues"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "httpx>=0.27",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+fws-console = "fws_console.cli:main"
+
+# Hatchling packages everything under fws_console/, the web/ assets included.
+[tool.hatch.build.targets.wheel]
+packages = ["fws_console"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
