@@ -149,13 +149,13 @@ lease.onChange = (state, info) => {
     ring.classList.remove('lost');
     $('lease-title').textContent = 'In control';
     $('lease-sub').textContent = 'renews automatically';
-    setStatus('sc-lease', 'ok', 'in control');
+    setStatus('sc-lease', 'ok', 'held');
   } else if (state === 'lost') {
     ring.classList.add('lost');
     $('lease-arc').style.strokeDashoffset = String(ARC_LEN);
     $('lease-title').textContent = 'Control LOST';
     $('lease-sub').textContent = 'the gateway watchdog stops motion';
-    setStatus('sc-lease', 'bad', 'control lost');
+    setStatus('sc-lease', 'bad', 'LOST');
     toast('Control lease lost — the gateway watchdog will stop motion', 'err', true);
     log('control lease lost — the gateway watchdog will stop motion', 'err');
   } else {
@@ -163,7 +163,7 @@ lease.onChange = (state, info) => {
     $('lease-arc').style.strokeDashoffset = String(ARC_LEN);
     $('lease-title').textContent = 'Observing';
     $('lease-sub').textContent = 'no control held';
-    setStatus('sc-lease', '', 'observing');
+    setStatus('sc-lease', '', 'observe');
   }
   syncControls();
 };
@@ -221,7 +221,7 @@ function reflectEnable() {
     enabledState === null ? 'Unknown' : enabledState ? 'Enabled' : 'Disabled';
   setStatus('sc-enable',
     enabledState ? 'ok' : '',
-    enabledState === null ? 'power —' : enabledState ? 'enabled' : 'disabled');
+    enabledState === null ? '—' : enabledState ? 'on' : 'off');
 }
 
 $('btn-reset').onclick = () => run('reset faults', () => api.resetErrors());
@@ -418,16 +418,21 @@ function lockModel(f) {
   if (best.model !== model) {
     model = best.model;
     view.clearTrail();
-    log(`kinematic model: ${model.label} (measured best fit)`, 'ok');
+    log(`kinematic model: ${model.label} (measured best fit)`);
   }
   $('model-note').textContent = model.note;
   loadMeshes(model);
+  // The default camera is a guess; once the model is known and a pose is
+  // on screen, frame the arm properly.
+  setTimeout(() => view.fit(), 150);
 }
 
 function loadMeshes(m) {
   if (!m.meshUrl) return;
   fetch(m.meshUrl).then((res) => (res.ok ? res.json() : null))
-    .then((data) => { if (data) view.setMeshes(data, m.meshLinks); })
+    .then((data) => {
+      if (data) { view.setMeshes(data, m.meshLinks); view.fit(); }
+    })
     .catch(() => {});
 }
 
@@ -441,25 +446,27 @@ function renderFault(f) {
       `<b>Controller fault</b> — main ${f.error_main}, sub ${f.error_sub}. ` +
       `<a href="#faults" style="color:inherit">Open the Faults tab</a> for the code table.`;
     $('fault-banner').classList.add('show');
-    setStatus('sc-robot', 'bad');
+    setStatus('sc-fault', 'bad', code);
     faultShown = true;
   } else if (!faulted && faultShown) {
     $('fault-banner').classList.remove('show');
-    setStatus('sc-robot', '');
+    setStatus('sc-fault', '', 'none');
     faultShown = false;
     log('fault cleared', 'ok');
   }
 }
 
 function renderJoints(f) {
-  const body = $('tbl-joints');
+  const body = $('deck-joints');
   const j = f.joints || [];
   if (body.childElementCount !== j.length) {
     body.innerHTML = j.map((_, i) => `
-      <tr><td>J${i + 1}</td><td id="jt-a-${i}"></td>
-      <td id="jt-h-${i}" class="small dim"></td>
-      <td style="width:70px"><div class="bar" id="jt-b-${i}"><i></i></div></td>
-      <td id="jt-t-${i}"></td></tr>`).join('');
+      <div class="deck-row">
+        <label>J${i + 1}</label>
+        <b id="jt-a-${i}">—</b>
+        <div class="bar" id="jt-b-${i}"><i></i></div>
+        <span id="jt-h-${i}">—</span>
+      </div>`).join('');
   }
   j.forEach((angle, i) => {
     $(`jt-a-${i}`).textContent = angle.toFixed(2);
@@ -471,60 +478,46 @@ function renderJoints(f) {
       const [mn, mx] = lim;
       const head = Math.min(angle - mn, mx - angle);
       const span = (mx - mn) / 2;
-      $(`jt-h-${i}`).textContent = `${head.toFixed(1)}°`;
+      $(`jt-h-${i}`).textContent = `${head.toFixed(0)}°`;
       const bar = $(`jt-b-${i}`);
       bar.className = `bar ${head < 5 ? 'bad' : head < 20 ? 'warn' : ''}`;
       bar.firstElementChild.style.width =
         `${Math.max(2, Math.min(100, (head / span) * 100))}%`;
     }
-    const tq = f.joint_torque && f.joint_torque[i];
-    if (tq !== undefined) $(`jt-t-${i}`).textContent = tq.toFixed(3);
   });
 }
 
+const FT_NAMES = ['Fx', 'Fy', 'Fz', 'Tx', 'Ty', 'Tz'];
 function renderTcp(f) {
-  const body = $('tbl-tcp');
-  const names = ['X', 'Y', 'Z', 'RX', 'RY', 'RZ'];
-  if (body.childElementCount !== 6) {
-    body.innerHTML = names.map((n, i) =>
-      `<tr><td>${n}</td><td id="tc-${i}"></td><td id="ft-${i}"></td></tr>`).join('');
-  }
-  names.forEach((_, i) => {
-    const p = f.tcp && f.tcp[i];
-    if (p !== undefined) {
-      $(`tc-${i}`).textContent = p.toFixed(2);
+  if (f.tcp) {
+    const [x, y, z, rx, ry, rz] = f.tcp;
+    $('ro-tcp-pos').textContent =
+      `X ${x.toFixed(1).padStart(7)}  Y ${y.toFixed(1).padStart(7)}  Z ${z.toFixed(1).padStart(7)}`;
+    $('ro-tcp-rot').textContent =
+      `R ${rx.toFixed(1).padStart(7)}  P ${ry.toFixed(1).padStart(7)}  W ${rz.toFixed(1).padStart(7)}`;
+    f.tcp.forEach((p, i) => {
       const lv = $(`lin-val-${i}`);
       if (lv) lv.textContent = p.toFixed(1);
+    });
+  }
+  const body = $('deck-ft');
+  if (f.ft) {
+    if (body.childElementCount !== 6) {
+      body.innerHTML = FT_NAMES.map((n, i) => `
+        <div class="deck-row ft">
+          <label>${n}</label>
+          <b id="ft-${i}">—</b>
+        </div>`).join('');
     }
-    const q = f.ft && f.ft[i];
-    if (q !== undefined) $(`ft-${i}`).textContent = q.toFixed(2);
-  });
+    f.ft.forEach((q, i) => { $(`ft-${i}`).textContent = q.toFixed(2); });
+  }
 }
 
-const healthDds = {};
 function renderStreamHealth(f) {
-  const rows = [
-    ['Robot link', f.connected ? 'up' : 'DOWN', !f.connected],
-    ['Frames', f.frames, false],
-    ['Bad checksum', f.bad_checksum, f.bad_checksum > 0],
-    ['Counter', f.counter, false],
-    ['Program state', f.program_state, false],
-  ];
-  const kv = $('kv-stream');
-  if (!kv.childElementCount) {
-    for (const [k] of rows) {
-      const dt = document.createElement('dt');
-      dt.textContent = k;
-      const dd = document.createElement('dd');
-      kv.append(dt, dd);
-      healthDds[k] = dd;
-    }
-  }
-  for (const [k, v, bad] of rows) {
-    const dd = healthDds[k];
-    dd.textContent = String(v);
-    dd.classList.toggle('bad', Boolean(bad));
-  }
+  const el = $('kv-stream-line');
+  el.textContent =
+    `${f.frames} frames · ${f.bad_checksum} bad · prog ${f.program_state}`;
+  el.style.color = f.bad_checksum > 0 ? 'var(--danger)' : '';
 }
 
 /* ---------------------------------------------------------------- tabs */
@@ -641,7 +634,7 @@ async function boot() {
   try {
     const r = await api.robot();
     $('sc-robot-name').textContent = r.model || 'unknown robot';
-    log(`connected to ${r.model} (${r.software})`, 'ok');
+    log(`connected to ${r.model} (${r.software})`);
     const named = modelFor(r.model);
     const set = named === MODELS.sim ? [MODELS.sim] : [named, MODELS.sim];
     candidates = set.map((m) => ({ model: m, sum: 0, n: 0 }));
@@ -662,7 +655,7 @@ async function boot() {
     const t = await api.get('/api/v1/frames/tool');
     if (t && t.offset) {
       toolOffset = t.offset;
-      log(`active tool ${t.active}: offset [${t.offset.slice(0, 3).join(', ')}] mm`, 'ok');
+      log(`active tool ${t.active}: offset [${t.offset.slice(0, 3).join(', ')}] mm`);
     }
   } catch { /* no tool info: draw to the flange */ }
 
@@ -675,3 +668,6 @@ async function boot() {
 }
 
 boot();
+
+// Debug handle for driving the console from automation; not a public API.
+window.fwsDebug = { view, lease, get model() { return model; } };

@@ -47,11 +47,13 @@
   <header>
     <span class="brand">FWS <small>Console</small></span>
 
+    <span class="robot-id" id="sc-robot"><b id="sc-robot-name">connecting…</b></span>
+
     <div id="status-cluster" role="status" aria-live="polite">
-      <span class="status-cell" id="sc-robot"><b id="sc-robot-name">connecting…</b></span>
-      <span class="status-cell" id="sc-stream"><i class="dot"></i><span id="sc-stream-text">stream</span></span>
-      <span class="status-cell" id="sc-lease"><i class="dot"></i><span id="sc-lease-text">observing</span></span>
-      <span class="status-cell" id="sc-enable"><i class="dot"></i><b id="sc-enable-text">disabled</b></span>
+      <span class="ann" id="sc-stream"><i class="dot"></i><label>LINK</label><span id="sc-stream-text">—</span></span>
+      <span class="ann" id="sc-lease"><i class="dot"></i><label>CTRL</label><span id="sc-lease-text">observe</span></span>
+      <span class="ann" id="sc-enable"><i class="dot"></i><label>POWER</label><b id="sc-enable-text">—</b></span>
+      <span class="ann" id="sc-fault"><i class="dot"></i><label>FAULT</label><span id="sc-fault-text">none</span></span>
     </div>
 
     <span class="spacer"></span>
@@ -74,114 +76,107 @@
       <button class="btn btn-sm" id="fault-banner-reset">Reset faults</button>
     </div>
 
-    <!-- Operate ---------------------------------------------------------- -->
-    <section data-tab="operate">
-      <div class="grid operate-grid">
-        <div class="card stage-card">
-          <canvas id="view" aria-label="3D robot view" role="img"></canvas>
-          <div id="stage-scrim" hidden></div>
-          <div class="stage-overlay">
-            <div class="stage-top">
-              <span class="tag" id="model-badge">no comparison yet</span>
-              <span class="spacer"></span>
-              <div class="stage-tools">
-                <button class="btn" id="btn-view-fit" title="Fit view">
-                  <svg viewBox="0 0 17 17"><use href="#i-fit"/></svg></button>
-                <button class="btn" id="btn-trail" title="Clear TCP trail">
-                  <svg viewBox="0 0 17 17"><use href="#i-reset"/></svg></button>
-              </div>
-            </div>
-            <div class="stage-bottom">
-              <span class="stage-note" id="model-note"></span>
-              <span class="stage-note">drag to orbit · wheel to zoom</span>
+    <!-- Operate: a fixed instrument panel — stage, controls, deck -------- -->
+    <section data-tab="operate" class="cockpit">
+      <div class="zone stage-zone">
+        <canvas id="view" aria-label="3D robot view" role="img"></canvas>
+        <div id="stage-scrim" hidden></div>
+        <div class="stage-overlay">
+          <div class="stage-top">
+            <span class="tag" id="model-badge">no comparison yet</span>
+            <span class="stage-note" id="model-note"></span>
+            <span class="spacer"></span>
+            <div class="stage-tools">
+              <button class="btn" id="btn-view-fit" title="Fit view">
+                <svg viewBox="0 0 17 17"><use href="#i-fit"/></svg></button>
+              <button class="btn" id="btn-trail" title="Clear TCP trail">
+                <svg viewBox="0 0 17 17"><use href="#i-reset"/></svg></button>
             </div>
           </div>
-        </div>
-
-        <div style="display:flex;flex-direction:column;gap:14px">
-          <div class="card">
-            <h2>Control</h2>
-            <div class="lease-card">
-              <div class="lease-ring" id="lease-ring">
-                <svg width="44" height="44" viewBox="0 0 44 44">
-                  <circle class="track" cx="22" cy="22" r="19"/>
-                  <circle class="arc" cx="22" cy="22" r="19" id="lease-arc"/>
-                </svg>
-              </div>
-              <div class="lease-body">
-                <b id="lease-title">Observing</b>
-                <span id="lease-sub">no control held</span>
-              </div>
-              <button class="btn btn-primary" id="btn-lease">
-                <svg viewBox="0 0 17 17"><use href="#i-key"/></svg>Take control
-              </button>
+          <div class="stage-bottom">
+            <div class="readout" id="ro-tcp">
+              <label>TCP mm · deg</label>
+              <div class="readout-row" id="ro-tcp-pos">—</div>
+              <div class="readout-row dim" id="ro-tcp-rot">—</div>
             </div>
-
-            <div class="small faint" style="margin-top:10px">
-              Stop is a functional stop, not an emergency stop.</div>
-            <div class="field-row" style="margin-top:8px">
-              <label for="switch-enable">Arm power</label>
-              <button class="switch" role="switch" aria-checked="false"
-                      id="switch-enable" disabled></button>
-              <b class="small" id="enable-label">Disabled</b>
-              <span class="spacer"></span>
-              <button class="btn btn-sm" id="btn-reset" disabled>
-                <svg viewBox="0 0 17 17"><use href="#i-reset"/></svg>Reset faults
-              </button>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Jog
-              <span class="spacer"></span>
-              <span class="seg" id="seg-step" role="group" aria-label="Step size"></span>
-            </h2>
-            <div class="small dim" id="jog-hint"
-                 style="margin:-4px 0 8px">Take control to enable jogging.</div>
-            <div class="field-row" style="margin-top:0">
-              <label for="in-vel">Velocity</label>
-              <input type="range" id="in-vel" min="1" max="30" value="15" step="1">
-              <b class="small num" id="vel-label" style="width:38px;text-align:right">15%</b>
-            </div>
-            <div id="jogpad"></div>
-            <div id="jog-note" class="small" aria-live="polite"
-                 style="min-height:16px;margin-top:6px"></div>
-            <h2 style="margin-top:14px">Cartesian <span class="dim" style="text-transform:none;letter-spacing:0">mm / deg</span></h2>
-            <div id="jogpad-lin"></div>
+            <span class="spacer"></span>
+            <span class="stage-note">drag to orbit · wheel to zoom</span>
           </div>
         </div>
       </div>
 
-      <div class="grid cols-3" style="margin-top:14px">
-        <div class="card" style="grid-column:1/-1">
-          <h2>Joint torque <span class="dim" style="text-transform:none;letter-spacing:0">Nm · last 60 s</span>
+      <div class="zone side-zone">
+        <div class="panel">
+          <h2>Master</h2>
+          <div class="lease-card">
+            <div class="lease-ring" id="lease-ring">
+              <svg width="44" height="44" viewBox="0 0 44 44">
+                <circle class="track" cx="22" cy="22" r="19"/>
+                <circle class="arc" cx="22" cy="22" r="19" id="lease-arc"/>
+              </svg>
+            </div>
+            <div class="lease-body">
+              <b id="lease-title">Observing</b>
+              <span id="lease-sub">no control held</span>
+            </div>
+            <button class="btn btn-primary" id="btn-lease">
+              <svg viewBox="0 0 17 17"><use href="#i-key"/></svg>Take control
+            </button>
+          </div>
+          <div class="field-row" style="margin:12px 0 0">
+            <label for="switch-enable">Arm power</label>
+            <button class="switch" role="switch" aria-checked="false"
+                    id="switch-enable" disabled></button>
+            <b class="small" id="enable-label">Unknown</b>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" id="btn-reset" disabled>
+              <svg viewBox="0 0 17 17"><use href="#i-reset"/></svg>Reset faults
+            </button>
+          </div>
+          <div class="small faint" style="margin-top:8px">
+            Stop is a functional stop, not an emergency stop.</div>
+        </div>
+
+        <div class="panel" style="flex:1;min-height:0;overflow-y:auto">
+          <h2>Jog
+            <span class="spacer"></span>
+            <span class="seg" id="seg-step" role="group" aria-label="Step size"></span>
+          </h2>
+          <div class="small dim" id="jog-hint"
+               style="margin:-4px 0 8px">Take control to enable jogging.</div>
+          <div class="field-row" style="margin-top:0">
+            <label for="in-vel">Velocity</label>
+            <input type="range" id="in-vel" min="1" max="30" value="15" step="1">
+            <b class="small num" id="vel-label" style="width:38px;text-align:right">15%</b>
+          </div>
+          <div id="jogpad"></div>
+          <div id="jog-note" class="small" aria-live="polite"
+               style="min-height:16px;margin-top:6px"></div>
+          <h2 style="margin-top:12px">Cartesian <span class="dim" style="text-transform:none;letter-spacing:0">mm / deg</span></h2>
+          <div id="jogpad-lin"></div>
+        </div>
+      </div>
+
+      <div class="zone deck-zone">
+        <div class="panel deck-panel">
+          <h2>Joints <span class="dim" style="text-transform:none;letter-spacing:0">deg · headroom</span></h2>
+          <div id="deck-joints" class="deck-joints"></div>
+        </div>
+        <div class="panel deck-panel" style="flex:1.4">
+          <h2>Joint torque <span class="dim" style="text-transform:none;letter-spacing:0">Nm · 60 s</span>
             <span class="spacer"></span><span class="small dim num" id="stream-rate"></span></h2>
           <div class="spark-grid" id="sparks"></div>
         </div>
-
-        <div class="card">
-          <h2>Joints</h2>
-          <table><thead><tr>
-            <th>Joint</th><th>Angle°</th><th>Headroom</th><th></th><th>Torque</th>
-          </tr></thead><tbody id="tbl-joints"></tbody></table>
+        <div class="panel deck-panel">
+          <h2>Wrist F/T <span class="dim" style="text-transform:none;letter-spacing:0">N · Nm</span></h2>
+          <div id="deck-ft" class="deck-joints"></div>
         </div>
-
-        <div class="card">
-          <h2>TCP &amp; wrist force</h2>
-          <table><thead><tr>
-            <th>Axis</th><th>Pose</th><th>F / T</th>
-          </tr></thead><tbody id="tbl-tcp"></tbody></table>
+        <div class="panel deck-panel" style="flex:1.2">
+          <h2>Activity
+            <span class="spacer"></span>
+            <span class="small faint" id="kv-stream-line"></span></h2>
+          <div id="log"></div>
         </div>
-
-        <div class="card">
-          <h2>Stream health</h2>
-          <dl class="kv" id="kv-stream"></dl>
-        </div>
-      </div>
-
-      <div class="card" style="margin-top:14px">
-        <h2>Activity</h2>
-        <div id="log"></div>
       </div>
     </section>
 

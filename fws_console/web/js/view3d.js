@@ -79,18 +79,32 @@ export class View3D {
     }, { passive: false });
   }
 
-  /** Frame the whole arm: reset orbit to the default view, sized to fit. */
+  /** Frame the whole arm: reset the orbit, then solve for the camera
+   * distance at which every point of the pose actually fits on screen with
+   * a margin — projected, not guessed from a bounding sphere. */
   fit() {
     this.yaw = -35 * Math.PI / 180;
     this.pitch = 22 * Math.PI / 180;
-    let radius = 950;
-    if (this.points) {
-      radius = 250;
-      for (const p of this.points) {
-        radius = Math.max(radius, Math.hypot(p[0], p[1], p[2] - this.zc));
+    if (this.points && this.points.length) {
+      // stop the vertical centre drifting after the fit is computed
+      const zs = this.points.map((p) => p[2]).concat([0]);
+      this.zc = (Math.min(...zs) + Math.max(...zs)) / 2;
+
+      this.dist = 2000;
+      for (let pass = 0; pass < 3; pass++) {
+        let worst = 0;
+        for (const p of this.points.concat([[0, 0, 0]])) {
+          const [sx, sy] = this.project(p);
+          worst = Math.max(worst,
+            Math.abs(sx - this.w / 2) / (this.w * 0.40),
+            Math.abs(sy - this.h / 2) / (this.h * 0.40));
+        }
+        if (worst < 1e-6) break;
+        this.dist = Math.max(700, Math.min(5000, this.dist * worst));
       }
+    } else {
+      this.dist = 2100;
     }
-    this.dist = Math.max(700, Math.min(5000, radius * 2.35));
     this.draw();
   }
 
