@@ -124,8 +124,12 @@ export class View3D {
       const prev = active.get(e.pointerId);
       if (!prev) return;
       if (active.size === 1) {
-        this.yaw += (e.clientX - prev.x) * 0.01;
-        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch + (e.clientY - prev.y) * 0.01));
+        // Camera-walk mapping, by operator decision: drag right = YOU step
+        // right around the robot, so the scene turns OPPOSITE to the hand.
+        // The += variant reads as spinning the robot itself — four rounds
+        // of "the arm is moving, not the camera" were this sign.
+        this.yaw -= (e.clientX - prev.x) * 0.01;
+        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch - (e.clientY - prev.y) * 0.01));
       }
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
