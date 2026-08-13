@@ -111,7 +111,6 @@ export class View3D {
 
     this.c.addEventListener('pointerdown', (e) => {
       this.c.setPointerCapture(e.pointerId);
-      if (active.size === 0) this._retarget();
       this._interacting = true;
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
@@ -173,28 +172,6 @@ export class View3D {
     this.draw();
   }
 
-  /** Move the orbit pivot to the arm's current centre without letting the
-   * image jump: the pivot point keeps its exact screen position (pan) and
-   * apparent depth (dist), so the grab is seamless and the rotation that
-   * follows turns around the arm as it stands NOW. */
-  _retarget() {
-    if (!this.points || !this.points.length) return;
-    this._projSetup();
-    let xlo = Infinity, xhi = -Infinity, ylo = Infinity, yhi = -Infinity,
-        zlo = Infinity, zhi = -Infinity;
-    for (const q of this.points) {
-      if (q[0] < xlo) xlo = q[0]; if (q[0] > xhi) xhi = q[0];
-      if (q[1] < ylo) ylo = q[1]; if (q[1] > yhi) yhi = q[1];
-      if (q[2] < zlo) zlo = q[2]; if (q[2] > zhi) zhi = q[2];
-    }
-    const c = [(xlo + xhi) / 2, (ylo + yhi) / 2, (zlo + zhi) / 2];
-    const [csx, csy, cdepth] = this.project(c);
-    this.tx = c[0]; this.ty = c[1]; this.zc = c[2];
-    this.dist = Math.max(700, Math.min(5000, this.dist + cdepth));
-    this.panX = csx - this.w / 2;
-    this.panY = csy - this.h / 2;
-  }
-
   /** Frame the whole arm: reset the orbit, then solve for the camera
    * distance at which every point of the pose actually fits on screen with
    * a margin — projected, not guessed from a bounding sphere. */
@@ -204,16 +181,16 @@ export class View3D {
     this._projSetup();
     this.panX = 0; this.panY = 0;
     if (this.points && this.points.length) {
-      // The pivot is the centre of what is being framed — pose plus the
-      // base, so the grid origin stays in view.
-      let xlo = 0, xhi = 0, ylo = 0, yhi = 0, zlo = 0, zhi = 0;
+      // Turntable: the orbit axis is ALWAYS the robot's base axis — the
+      // whole scene turns together, the way the first version behaved and
+      // the way an operator reads it as "walking around the cell". Only the
+      // vertical centre and the distance adapt to the pose.
+      this.tx = 0;
+      this.ty = 0;
+      let zlo = 0, zhi = 0;
       for (const q of this.points) {
-        if (q[0] < xlo) xlo = q[0]; if (q[0] > xhi) xhi = q[0];
-        if (q[1] < ylo) ylo = q[1]; if (q[1] > yhi) yhi = q[1];
         if (q[2] < zlo) zlo = q[2]; if (q[2] > zhi) zhi = q[2];
       }
-      this.tx = (xlo + xhi) / 2;
-      this.ty = (ylo + yhi) / 2;
       this.zc = (zlo + zhi) / 2;
 
       this.dist = 2000;
