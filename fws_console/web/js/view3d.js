@@ -75,8 +75,18 @@ export class View3D {
     new ResizeObserver(() => this._resize()).observe(canvas);
   }
 
+  /** Coalesce redraw requests to one paint per display frame. Purely a
+   * scheduling change: what gets painted, and how the drag responds, is
+   * untouched. */
+  _schedule() {
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => { this._raf = 0; this.draw(); });
+  }
+
   _resize() {
-    const dpr = window.devicePixelRatio || 1;
+    // 1.5x is visually indistinguishable for shaded triangles and halves
+    // (or quarters) the pixels rasterised per frame on HiDPI displays.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const r = this.c.getBoundingClientRect();
     this.c.width = Math.max(1, Math.round(r.width * dpr));
     this.c.height = Math.max(1, Math.round(r.height * dpr));
@@ -120,13 +130,13 @@ export class View3D {
         }
         pinchDist = d;
       }
-      this.draw();
+      this._schedule();
     });
 
     this.c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.dist = Math.max(700, Math.min(5000, this.dist * (1 + Math.sign(e.deltaY) * 0.12)));
-      this.draw();
+      this._schedule();
     }, { passive: false });
   }
 
@@ -232,7 +242,11 @@ export class View3D {
       // frame nor loses an arm working entirely below the base plane.
       const zs = points.map((p) => p[2]).concat([0]);   // keep the grid in view
       const target = (Math.min(...zs) + Math.max(...zs)) / 2;
-      this.zc += (target - this.zc) * 0.08;
+      // Ease exactly as before, but snap the last 0.05 mm: an asymptote
+      // that never lands keeps every parked frame "different" and defeats
+      // the identical-frame skip below.
+      const dz = target - this.zc;
+      this.zc += Math.abs(dz) < 0.05 ? dz : dz * 0.08;
       const tip = points[points.length - 1];
       const last = this.trail[this.trail.length - 1];
       if (!last || Math.hypot(tip[0] - last[0], tip[1] - last[1], tip[2] - last[2]) > 3) {
@@ -272,6 +286,27 @@ export class View3D {
   draw() {
     const g = this.ctx;
     if (!g || !this.w) return;
+
+    // Telemetry arrives at 10 Hz whether or not the arm moves; a parked arm
+    // re-renders identically, so skip the frame when nothing changed.
+    // Quantised to 0.1 mm: real encoders jitter a few micrometres between
+    // frames, so bit-exact comparison never matches on live hardware even
+    // with the arm parked. 0.1 mm is far below a pixel at stage scale.
+    let ph = 0;
+    if (this.points) {
+      for (let i = 0; i < this.points.length; i++) {
+        const p = this.points[i];
+        ph += Math.round(p[0] * 10) * (i * 3 + 1)
+            + Math.round(p[1] * 10) * (i * 3 + 2)
+            + Math.round(p[2] * 10) * (i * 3 + 3);
+      }
+    }
+    const sig = `${this.yaw},${this.pitch},${this.dist},${this.zc.toFixed(1)},${this.w},`
+      + `${this.h},${!this.points},${ph},${this.trail.length},`
+      + `${this.meshes ? 1 : 0},${this._isDark()}`;
+    if (sig === this._sig) return;
+    this._sig = sig;
+
     g.clearRect(0, 0, this.w, this.h);
 
     const { line, line2, dim, text, accent, data, ok } = this._theme();

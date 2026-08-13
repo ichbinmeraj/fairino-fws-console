@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="chrome://global/skin/design-system/tokens-brand.css">
     <link rel="stylesheet" href="chrome://newtab/content/css/activity-stream.css" />
   </head>
-  <!-- Cached: Wed, 12 Aug 2026 13:26:58 GMT -->
+  <!-- Cached: Thu, 13 Aug 2026 01:04:50 GMT -->
   <body class="activity-stream">
     <div id="header-asrouter-container" role="presentation"></div>
     <div id="root">
@@ -484,4 +484,4 @@ window.__STARTUP_STATE__ = {
 	}
 };
 
-ßk‰           j|t¢IÏ‚ÿÿÿÿ       :about:home alt-data 1;10219,script version 20260601110758   dc
+øØ–À×           j}2IÏóhÿÿÿÿ       :about:home alt-data 1;10219,script version 20260601110758   dc
