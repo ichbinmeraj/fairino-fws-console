@@ -7,6 +7,7 @@
 // registry, the 282-function Lua catalogue, the file kinds, system health.
 
 import { ApiError } from './api.js';
+import { confirmGateway, dialog, skeleton } from './ui.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -264,7 +265,7 @@ async function commands(root, apiClient, log, toast) {
       </div>
     </div>
     <div class="grid cols-3" style="margin-top:14px">
-      ${card('Registry summary', '<dl class="kv" id="cmd-summary"></dl>')}
+      ${card('Registry summary', `<dl class="kv" id="cmd-summary"></dl>`)}
       <div class="card" style="grid-column:span 2">
         <h2>Invoke policy</h2>
         <div class="scroll" style="max-height:260px"><table>
@@ -419,8 +420,8 @@ async function lua(root, apiClient, log, toast) {
     </div>
     <div class="grid cols-3" style="margin-top:14px">
       ${card('Catalogue', '<dl class="kv" id="lua-summary"></dl>')}
-      ${card('Firmware', '<div id="lua-firmware" class="small dim">loading…</div>')}
-      ${card('Manual conflicts', '<div id="lua-conflicts" class="small dim">loading…</div>')}
+      ${card('Firmware', '<div id="lua-firmware" class="small dim">${skeleton(3)}</div>')}
+      ${card('Manual conflicts', '<div id="lua-conflicts" class="small dim">${skeleton(3)}</div>')}
       <div class="card" style="grid-column:1/-1">
         <h2>Compile a snippet
           <span class="spacer"></span>
@@ -435,11 +436,11 @@ PrintMsg('hello')"></textarea>
       </div>
       <div class="card" style="grid-column:1/-1">
         <h2>RPC ↔ Lua bridge</h2>
-        <div id="lua-bridge" class="small dim">loading…</div>
+        <div id="lua-bridge" class="small dim">${skeleton(3)}</div>
       </div>
       <div class="card" style="grid-column:1/-1">
         <h2>Manual sections</h2>
-        <div id="lua-sections" class="small dim">loading…</div>
+        <div id="lua-sections" class="small dim">${skeleton(3)}</div>
       </div>
     </div>`;
 
@@ -526,7 +527,7 @@ PrintMsg('hello')"></textarea>
         for (const x of listEl.querySelectorAll('[data-fn]')) x.classList.remove('sel');
         b.classList.add('sel');
         const el = root.querySelector('#lua-detail');
-        el.innerHTML = '<h2>Function</h2><div class="small dim">loading…</div>';
+        el.innerHTML = '<h2>Function</h2><div class="small dim">${skeleton(3)}</div>';
         try {
           const d = await apiClient.get(`/api/v1/lua/functions/${encodeURIComponent(b.dataset.fn)}`);
           el.innerHTML = `<h2>${esc(d.name || b.dataset.fn)}</h2>${jsonBlock(d)}`;
@@ -546,7 +547,7 @@ PrintMsg('hello')"></textarea>
 async function files(root, apiClient, log, toast) {
   root.innerHTML = `
     <div class="grid cols-3">
-      ${card('File kinds', '<div id="f-kinds" class="small dim">loading…</div>')}
+      ${card('File kinds', '<div id="f-kinds" class="small dim">${skeleton(3)}</div>')}
       <div class="card" style="grid-column:span 2">
         <h2>Controller filesystem
           <span class="spacer"></span>
@@ -560,9 +561,9 @@ async function files(root, apiClient, log, toast) {
         <div id="cf-out" style="margin-top:10px"></div>
       </div>
       ${card('Lua compile verdicts',
-        '<div id="f-verdicts" class="small dim">loading…</div>',
+        '<div id="f-verdicts" class="small dim">${skeleton(3)}</div>',
         '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="f-v-refresh">refresh</button>')}
-      ${card('Backups', '<div id="f-backup" class="small dim">loading…</div>')}
+      ${card('Backups', '<div id="f-backup" class="small dim">${skeleton(3)}</div>')}
       ${card('Program versions', `
         <div class="field-row" style="margin-top:0">
           <input id="f-ver-name" placeholder="program.lua" style="flex:1">
@@ -655,13 +656,13 @@ async function files(root, apiClient, log, toast) {
 async function system(root, apiClient, log, toast) {
   root.innerHTML = `
     <div class="grid cols-3">
-      ${card('Health', '<div id="sy-health" class="small dim">loading…</div>',
+      ${card('Health', '<div id="sy-health" class="small dim">${skeleton(3)}</div>',
         '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="sy-refresh">refresh</button>')}
-      ${card('Boot / recovery', '<div id="sy-recovery" class="small dim">loading…</div>')}
-      ${card('Versions', '<div id="sy-version" class="small dim">loading…</div>')}
-      ${card('Controller services', '<div id="sy-services" class="small dim">loading…</div>')}
-      ${card('Processes (qconn)', '<div id="sy-proc" class="small dim">loading…</div>')}
-      ${card('qconn probe', '<div id="sy-qconn" class="small dim">loading…</div>')}
+      ${card('Boot / recovery', '<div id="sy-recovery" class="small dim">${skeleton(3)}</div>')}
+      ${card('Versions', '<div id="sy-version" class="small dim">${skeleton(3)}</div>')}
+      ${card('Controller services', '<div id="sy-services" class="small dim">${skeleton(3)}</div>')}
+      ${card('Processes (qconn)', '<div id="sy-proc" class="small dim">${skeleton(3)}</div>')}
+      ${card('qconn probe', '<div id="sy-qconn" class="small dim">${skeleton(3)}</div>')}
       <div class="card" style="grid-column:1/-1">
         <h2>Controller shell
           <span class="spacer"></span>
@@ -745,9 +746,12 @@ async function system(root, apiClient, log, toast) {
     }
   };
 
-  const lifecycle = (id, path, label, confirmText) => {
+  const lifecycle = (id, path, label, confirmText, title) => {
     root.querySelector(id).onclick = async () => {
-      if (!confirm(confirmText)) return;
+      if (!(await dialog({
+        title, body: `<p class="dlg-quote">${esc(confirmText)}</p>`,
+        confirmLabel: label, danger: true,
+      }))) return;
       const out = root.querySelector('#sy-out');
       try {
         const r = await apiClient.post(path, { confirm: true });
@@ -760,13 +764,17 @@ async function system(root, apiClient, log, toast) {
       }
     };
   };
-  lifecycle('#sy-restart', '/api/v1/controller/restart', 'restart controller app',
-    'Restart the controller application? Motion stops.');
-  lifecycle('#sy-reboot', '/api/v1/controller/reboot', 'reboot controller',
-    'Reboot the controller? It will be unreachable for ~30 s.');
-  lifecycle('#sy-shutdown', '/api/v1/system/shutdown', 'SHUTDOWN controller',
-    'SHUT DOWN the controller?\n\nThis is ONE-WAY: there is no remote power-on. '
-    + 'Someone must physically restore power.');
+  lifecycle('#sy-restart', '/api/v1/controller/restart', 'Restart',
+    'The controller application restarts. Motion stops; the arm stays powered.',
+    'Restart the controller application?');
+  lifecycle('#sy-reboot', '/api/v1/controller/reboot', 'Reboot',
+    'The controller reboots and is unreachable for roughly 30 seconds. '
+    + 'The arm loses power for that time.',
+    'Reboot the controller?');
+  lifecycle('#sy-shutdown', '/api/v1/system/shutdown', 'Shut down',
+    'This is ONE-WAY. The vendor API has ShutDownRobotOS and no remote '
+    + 'power-on, so someone must physically restore power at the cell.',
+    'Shut the controller down?');
 
   document.dispatchEvent(new CustomEvent('fws-sync'));
 }
@@ -776,15 +784,15 @@ async function system(root, apiClient, log, toast) {
 async function config(root, apiClient, log, toast) {
   root.innerHTML = `
     <div class="grid cols-3">
-      ${card('Robot state', '<div id="cf-state" class="small dim">loading…</div>',
+      ${card('Robot state', '<div id="cf-state" class="small dim">${skeleton(3)}</div>',
         '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="cf-reload">refresh</button>')}
-      ${card('Velocity', '<div id="cf-vel" class="small dim">loading…</div>')}
-      ${card('Flange pose', '<div id="cf-flange" class="small dim">loading…</div>')}
-      ${card('Active frames', '<div id="cf-active" class="small dim">loading…</div>')}
-      ${card('Joint torques', '<div id="cf-torque" class="small dim">loading…</div>')}
-      ${card('Tool frames', '<div id="cf-tool" class="small dim">loading…</div>')}
-      ${card('Work frames', '<div id="cf-work" class="small dim">loading…</div>')}
-      ${card('Gripper', '<div id="cf-grip" class="small dim">loading…</div>')}
+      ${card('Velocity', '<div id="cf-vel" class="small dim">${skeleton(3)}</div>')}
+      ${card('Flange pose', '<div id="cf-flange" class="small dim">${skeleton(3)}</div>')}
+      ${card('Active frames', '<div id="cf-active" class="small dim">${skeleton(3)}</div>')}
+      ${card('Joint torques', '<div id="cf-torque" class="small dim">${skeleton(3)}</div>')}
+      ${card('Tool frames', '<div id="cf-tool" class="small dim">${skeleton(3)}</div>')}
+      ${card('Work frames', '<div id="cf-work" class="small dim">${skeleton(3)}</div>')}
+      ${card('Gripper', '<div id="cf-grip" class="small dim">${skeleton(3)}</div>')}
       <div class="card">
         <h2>Payload</h2>
         <div id="cf-payload" class="small dim" style="margin-bottom:10px">loading…</div>
@@ -806,7 +814,7 @@ async function config(root, apiClient, log, toast) {
       </div>
       <div class="card">
         <h2>Motion queue</h2>
-        <div id="cf-queue" class="small dim">loading…</div>
+        <div id="cf-queue" class="small dim">${skeleton(3)}</div>
         <div class="row" style="margin-top:10px">
           <button class="btn btn-sm" id="cf-preview">Preview jog (IK pre-flight)</button>
         </div>
@@ -904,7 +912,14 @@ async function config(root, apiClient, log, toast) {
   };
   root.querySelector('#cf-pt-switch').onclick = async () => {
     const n = root.querySelector('#cf-pt-name').value.trim();
-    if (!n || !confirm(`Switch the active point table to ${n}?`)) return;
+    if (!n) return;
+    if (!(await dialog({
+      title: 'Switch the active point table?',
+      body: `<p>Programs resolve taught point names against the active table. '
+          + 'Switching changes where every <code>PTP</code> and <code>Lin</code> '
+          + 'in a running program will go.</p><p class="dlg-quote">${esc(n)}</p>`,
+      confirmLabel: 'Switch', danger: true,
+    }))) return;
     try {
       ptOut.innerHTML = jsonBlock(await apiClient.post(
         `/api/v1/points/tables/${encodeURIComponent(n)}/switch`, { confirm: true }));

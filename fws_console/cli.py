@@ -31,6 +31,12 @@ def configure_app(app, settings) -> None:
 
     app.mount(MOUNT, StaticFiles(directory=WEB, html=True), name="console")
 
+    # The console must load before it can ask for an API key; a page that
+    # requests a credential cannot itself require that credential. Only this
+    # prefix opens — every /api/v1 call the page makes still needs the key.
+    from fws.auth import register_open_path
+    register_open_path(MOUNT)
+
     # no-cache means "revalidate every load", not "never cache": unchanged
     # files still answer 304. Without it browsers serve the ES modules from
     # heuristic cache indefinitely, and a console update leaves an operator

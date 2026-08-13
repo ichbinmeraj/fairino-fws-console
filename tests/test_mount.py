@@ -125,3 +125,43 @@ class TestDeveloperPanels:
         ]
         missing = [d for d in domains if f"/api/v1/{d}" not in src]
         assert not missing, f"no panel touches these domains: {missing}"
+
+
+class TestInterfaceQuality:
+    """UX properties that are cheap to regress and expensive to notice."""
+
+    def test_no_native_blocking_dialogs(self):
+        """window.confirm/prompt/alert block the event loop, cannot be
+        styled or given a destructive treatment, and browsers offer to
+        suppress them after repeated use — which would silently disable a
+        robot confirmation. ui.js provides styled <dialog> replacements."""
+        import re
+        offenders = []
+        for f in (WEB / "js").glob("*.js"):
+            if f.name == "ui.js":
+                continue          # defines the replacements, names them in docs
+            for m in re.finditer(r"(?<![\w.])(confirm|prompt|alert)\s*\(", f.read_text()):
+                offenders.append(f"{f.name}: {m.group(1)}()")
+        assert not offenders, offenders
+
+    def test_the_type_scale_is_tokenised(self):
+        """Twelve ad-hoc sizes, several half a pixel apart, blurred the
+        vertical rhythm wherever two components met."""
+        import re
+        css = (WEB / "css" / "app.css").read_text()
+        literals = set(re.findall(r"font-size:\s*([0-9.]+)px", css))
+        assert not literals, f"un-tokenised font sizes: {sorted(literals)}"
+        for step in ("--fs-2xs", "--fs-xs", "--fs-sm", "--fs-md", "--fs-lg"):
+            assert step in css, f"missing type step {step}"
+
+    def test_escape_cannot_reach_stop_from_a_modal(self):
+        """Escape inside a confirmation means 'no' — it must cancel the
+        dialog, never fall through to the STOP shortcut."""
+        main = (WEB / "js" / "main.js").read_text()
+        assert "dialog[open]" in main, \
+            "the Escape handler does not yield to an open modal"
+
+    def test_the_palette_is_registered_from_several_sources(self):
+        main = (WEB / "js" / "main.js").read_text()
+        assert main.count("registerPalette") >= 4, \
+            "palette should offer panels, actions, endpoints and commands"

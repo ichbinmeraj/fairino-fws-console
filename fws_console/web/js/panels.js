@@ -6,6 +6,7 @@
 // wish it returned.
 
 import { ApiError } from './api.js';
+import { confirmGateway, skeleton } from './ui.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -29,7 +30,7 @@ function empty(icon, text) {
 async function faults(root, api, log, toast) {
   root.innerHTML = `
     <div class="grid cols-3">
-      ${card('Current fault', '<div id="fault-now" class="mono">loading…</div>')}
+      ${card('Current fault', `<div id="fault-now" class="mono">${skeleton(2)}</div>`)}
       <div class="card" style="grid-column:span 2">
         <h2>Error code lookup
           <span class="spacer"></span>
@@ -194,8 +195,10 @@ async function programs(root, api, log, toast) {
       try {
         await put(false);
       } catch (e) {
-        if (!(e instanceof ApiError && e.status === 409
-              && confirm(`${e.message}\n\nOverwrite?`))) throw e;
+        const clash = e instanceof ApiError && e.status === 409;
+        if (!clash || !(await confirmGateway(e.message, {
+          title: 'Overwrite this program?', confirmLabel: 'Overwrite',
+        }))) throw e;
         await put(true);
       }
       log(`uploaded ${f.name} (${f.size} bytes)`, 'ok');
@@ -213,7 +216,10 @@ async function programs(root, api, log, toast) {
       // The run endpoint refuses once without confirm -- by design. Surface
       // the gateway's own wording, then re-ask with confirmation.
       if (label === 'run' && e instanceof ApiError && e.status === 400
-          && confirm(`${e.message}\n\nSend again with confirm=true?`)) {
+          && await confirmGateway(e.message, {
+            title: 'Run the loaded program?',
+            confirmLabel: 'Clear — run it',
+          })) {
         try {
           await api.post(path, { confirm: true });
           log('run (confirmed)', 'ok');
@@ -355,12 +361,12 @@ async function force(root, api, log, toast) {
         <div class="small faint" style="margin-top:10px">
           Zeroing takes the current load as the new reference. Do it with the
           tool unloaded, or the reading will lie by exactly that much.</div>`)}
-      ${card('Payload', `<dl class="kv" id="f-pay">loading…</dl>`)}
+      ${card('Payload', `<dl class="kv" id="f-pay"></dl>`)}
       <div class="card" style="grid-column:1/-1">
         <h2>Force strategies
           <span class="spacer"></span>
           <span class="small faint">why these have no endpoint</span></h2>
-        <div id="f-strat" class="small dim">loading…</div>
+        <div id="f-strat" class="small dim">${skeleton(3)}</div>
       </div>
     </div>`;
 

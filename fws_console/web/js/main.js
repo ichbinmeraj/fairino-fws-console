@@ -7,6 +7,10 @@ import { MODELS, agreement, modelFor, verdict } from './kin.js';
 import { PANELS } from './panels.js';
 import { DEV_PANELS } from './devpanels.js';
 import { invalidateChartTheme, SharedScale, Spark } from './charts.js';
+import {
+  closePalette, dialog, openPalette, paletteOpen, registerPalette,
+  shortcutsSheet,
+} from './ui.js';
 
 const api = new Api('');            // same origin: the gateway serves this page
 const lease = new Lease(api);
@@ -23,6 +27,7 @@ let commanding = false;             // one command in flight at a time, on purpo
 let lastLimits = null;
 let readOnly = false;
 let toolOffset = null;
+let toolKnown = false;      // false => the drawn tip omits the tool transform
 let enabledState = null;            // null = unknown until first command
 let leaseExpiresAt = 0;             // epoch seconds, for the local countdown
 let leaseTtl = 30;
@@ -51,6 +56,23 @@ function themePref() {
 matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
   if (themePref() === 'system') applyTheme('system');
 });
+
+/* ---------------------------------------------------------------- auth */
+
+// The key lives in this browser only. It is sent as X-API-Key on every
+// request by Api.request(); the gateway serves /console itself unauthenticated
+// so this page can load in order to ask for it.
+function setApiKey(key) {
+  api.apiKey = key || null;
+  try {
+    if (key) localStorage.setItem('fws-api-key', key);
+    else localStorage.removeItem('fws-api-key');
+  } catch { /* private mode: key lives for this page only */ }
+  const label = $('key-label');
+  if (label) label.textContent = key ? 'key set' : 'no key';
+}
+
+try { api.apiKey = localStorage.getItem('fws-api-key') || null; } catch { /* ignore */ }
 
 /* ---------------------------------------------------------------- toasts */
 
@@ -234,13 +256,54 @@ $('btn-view-fit').onclick = () => view.fit();
 
 // Esc = stop. The one keyboard shortcut, because reaching for a pointing
 // device mid-surprise is the slow path. Jogging has no keys, deliberately.
+const SHORTCUTS = [
+  ['⌘+K', 'Command palette — jump to any panel, endpoint or wire command'],
+  ['Ctrl+K', 'Same, on Windows and Linux'],
+  ['Esc', 'STOP the robot (with control held) · close the palette'],
+  ['g then 1…9', 'Go to the nth panel'],
+  ['?', 'This sheet'],
+];
+
+let goPrefix = false;
+
 window.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  e.preventDefault();
-  if (lease.held && !readOnly) {
-    run('STOP (Esc)', () => api.stop(), { priority: true });
-  } else if (!readOnly) {
-    toast('No control held — take control to stop from here', 'warn');
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)
+    || e.target.isContentEditable;
+
+  // Palette: the one chord every developer tool has.
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    paletteOpen() ? closePalette() : openPalette();
+    return;
+  }
+
+  if (e.key === 'Escape') {
+    if (paletteOpen()) { closePalette(); return; }
+    // A modal owns Escape: it must cancel the dialog, never fall through to
+    // STOP. Letting it through both blocked <dialog>'s native close (we call
+    // preventDefault below) and fired a robot command from a keypress the
+    // operator meant as "no".
+    if (document.querySelector('dialog[open]')) return;
+    if (typing) return;                    // let fields clear themselves
+    e.preventDefault();
+    if (lease.held && !readOnly) {
+      run('STOP (Esc)', () => api.stop(), { priority: true });
+    } else if (!readOnly) {
+      toast('No control held — take control to stop from here', 'warn');
+    }
+    return;
+  }
+
+  if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+
+  if (e.key === '?') { e.preventDefault(); shortcutsSheet(SHORTCUTS); return; }
+
+  // vim-ish "g then n" jump, the pattern developer tools settled on.
+  if (e.key === 'g') { goPrefix = true; setTimeout(() => { goPrefix = false; }, 900); return; }
+  if (goPrefix && /^[1-9]$/.test(e.key)) {
+    goPrefix = false;
+    const t = TABS[Number(e.key) - 1];
+    if (t) { e.preventDefault(); selectTab(t[0]); }
   }
 });
 
@@ -437,9 +500,16 @@ function renderTick() {
       const tip = pts[pts.length - 1];
       err = Math.hypot(tip[0] - f.tcp[0], tip[1] - f.tcp[1], tip[2] - f.tcp[2]);
     }
-    const v = verdict(err);
+    const v = toolKnown || err === null || err < 1.0
+      ? verdict(err)
+      : { level: 'warn',
+          text: `tool offset unknown — tip drawn to the flange (${err.toFixed(0)} mm)` };
     const badge = $('model-badge');
     badge.textContent = v.text;
+    badge.title = toolKnown ? ''
+      : 'The controller refused the tool-frame getter, so the drawn tip omits '
+      + 'the tool transform that the reported TCP includes. Clearing the '
+      + 'fault usually restores it.';
     badge.className = `tag ${v.level === 'ok' ? 'ok' : v.level === 'warn' ? 'warn' : v.level === 'bad' ? 'bad' : ''}`;
   }
 }
@@ -500,6 +570,7 @@ function renderFault(f) {
     setStatus('sc-fault', '', 'none');
     faultShown = false;
     log('fault cleared', 'ok');
+    if (!toolKnown) loadToolFrame();      // getters refuse while faulted
   }
 }
 
@@ -567,6 +638,23 @@ function renderStreamHealth(f) {
   el.style.color = f.bad_checksum > 0 ? 'var(--danger)' : '';
 }
 
+/** The tool transform is part of the reported TCP, so the drawn tip needs
+ * it to be comparable. A faulted controller refuses the getter (error 14),
+ * which is why this is retried when a fault clears rather than fetched once. */
+async function loadToolFrame() {
+  try {
+    const t = await api.get('/api/v1/frames/tool');
+    if (t && t.offset) {
+      toolOffset = t.offset;
+      toolKnown = true;
+      log(`active tool ${t.active}: offset [${t.offset.slice(0, 3).join(', ')}] mm`);
+    }
+  } catch (e) {
+    toolKnown = false;
+    log(`tool frame unavailable: ${e.message}`, 'warn');
+  }
+}
+
 /* ---------------------------------------------------------------- tabs */
 
 // Operator tabs first, then the developer surface; the rail draws a
@@ -605,6 +693,13 @@ function selectTab(id, push = true) {
     sec.hidden = !on;
   }
   if (push && location.hash.slice(1) !== id) location.hash = id;
+  // Keyboard and screen-reader users must land inside the panel they chose,
+  // not stay parked on the rail.
+  if (push) {
+    const sec = document.querySelector(`section[data-tab="${id}"]`);
+    sec.tabIndex = -1;
+    sec.focus({ preventScroll: true });
+  }
   if (id === 'operate' && pendingFrame && !renderQueued) {
     renderQueued = true;
     requestAnimationFrame(renderTick);
@@ -656,11 +751,30 @@ function buildTabs() {
   const foot = document.createElement('div');
   foot.className = 'rail-foot';
   foot.innerHTML = `
+    <button class="btn btn-ghost btn-sm" id="btn-key" title="API key">
+      <svg viewBox="0 0 17 17"><use href="#i-lock"/></svg>
+      <span id="key-label">no key</span>
+    </button>
     <button class="btn btn-ghost btn-sm" id="btn-theme" title="Theme">
       <svg viewBox="0 0 17 17"><use href="#i-theme"/></svg>
       <span id="theme-label"></span>
     </button>`;
   nav.append(foot);
+  $('btn-key').onclick = async () => {
+    const next = await dialog({
+      title: 'API key',
+      body: '<p>Sent as <code>X-API-Key</code> on every request. Needed only '
+          + 'when the gateway runs with <code>auth.api_keys_file</code> set. '
+          + 'Stored in this browser only — clear the field to remove it.</p>',
+      input: { value: api.apiKey || '', placeholder: 'paste key', type: 'password' },
+      confirmLabel: 'Save',
+    });
+    if (next === false) return;
+    setApiKey(next);
+    log(next ? 'API key set' : 'API key cleared', 'ok');
+    location.reload();      // re-run boot with the new credential
+  };
+
   $('btn-theme').onclick = () => {
     const next = THEMES[(THEMES.indexOf(themePref()) + 1) % THEMES.length];
     applyTheme(next);
@@ -671,6 +785,7 @@ function buildTabs() {
 
 async function boot() {
   buildTabs();
+  setApiKey(api.apiKey);
   buildStatusStrip();
   buildStepSeg();
   buildJogPads();
@@ -709,7 +824,12 @@ async function boot() {
     $('model-note').textContent = 'identifying kinematic model…';
   } catch (e) {
     $('sc-robot-name').textContent = 'no controller';
-    log(`cannot identify controller: ${e.message}`, 'err');
+    if (e instanceof ApiError && e.status === 401) {
+      toast('This gateway requires an API key — set one in the sidebar', 'warn', true);
+      log('401: gateway requires an API key (sidebar → key)', 'err');
+    } else {
+      log(`cannot identify controller: ${e.message}`, 'err');
+    }
     $('model-note').textContent = model.note;
   }
 
@@ -718,13 +838,7 @@ async function boot() {
     if (l && l.limits) lastLimits = l.limits.map((x) => [x.min, x.max]);
   } catch { /* the stream carries limits too */ }
 
-  try {
-    const t = await api.get('/api/v1/frames/tool');
-    if (t && t.offset) {
-      toolOffset = t.offset;
-      log(`active tool ${t.active}: offset [${t.offset.slice(0, 3).join(', ')}] mm`);
-    }
-  } catch { /* no tool info: draw to the flange */ }
+  await loadToolFrame();
 
   stream.connect();
   selectTab(location.hash.slice(1) || 'operate', false);
@@ -737,6 +851,77 @@ async function boot() {
 // Panels rebuild rows after their own fetches; they raise this when their
 // commanding controls need gating against the current lease.
 document.addEventListener('fws-sync', () => syncControls());
+
+/* ------------------------------------------------------- palette sources */
+
+registerPalette(() => TABS.map(([id, label]) => ({
+  group: 'Panel', label, hint: '', run: () => selectTab(id),
+})));
+
+registerPalette(() => [
+  { group: 'Action', label: lease.held ? 'Release control' : 'Take control',
+    run: () => $('btn-lease').click() },
+  { group: 'Action', label: 'STOP the robot', hint: 'Esc',
+    run: () => $('btn-stop').click() },
+  { group: 'Action', label: 'Reset faults', run: () => $('btn-reset').click() },
+  { group: 'Action', label: 'Fit the 3D view', run: () => view.fit() },
+  { group: 'Action', label: 'Clear the TCP trail', run: () => view.clearTrail() },
+  { group: 'Action', label: 'Cycle the theme', run: () => $('btn-theme').click() },
+  { group: 'Action', label: 'Set the API key', run: () => $('btn-key').click() },
+  { group: 'Action', label: 'Keyboard shortcuts', hint: '?',
+    run: () => shortcutsSheet(SHORTCUTS) },
+  ...['iso', 'front', 'back', 'left', 'right', 'top'].map((v) => ({
+    group: 'View', label: `${v.toUpperCase()} viewpoint`,
+    run: () => document.querySelector(`[data-view="${v}"]`)?.click(),
+  })),
+]);
+
+// Endpoints and wire commands are fetched once, on first palette open.
+let specCache = null;
+registerPalette(async () => {
+  specCache = specCache || await api.get('/openapi.json');
+  const out = [];
+  for (const [path, item] of Object.entries(specCache.paths)) {
+    for (const method of Object.keys(item)) {
+      if (!['get', 'post', 'put', 'delete', 'patch'].includes(method)) continue;
+      out.push({
+        group: 'Endpoint',
+        label: `${method.toUpperCase()} ${path.replace('/api/v1', '')}`,
+        hint: '', 
+        run: () => {
+          selectTab('api');
+          // Let the panel build, then filter it down to this operation.
+          setTimeout(() => {
+            const q = document.getElementById('api-q');
+            if (!q) return;
+            q.value = path.replace('/api/v1', '');
+            q.dispatchEvent(new Event('input'));
+            document.querySelector('#api-list .api-op')?.click();
+          }, 350);
+        },
+      });
+    }
+  }
+  return out;
+});
+
+let cmdCache = null;
+registerPalette(async () => {
+  cmdCache = cmdCache || (await api.get('/api/v1/commands?limit=1000')).commands;
+  return (cmdCache || []).map((c) => ({
+    group: 'Command', label: c.name, hint: c.danger,
+    run: () => {
+      selectTab('commands');
+      setTimeout(() => {
+        const q = document.getElementById('cmd-q');
+        if (!q) return;
+        q.value = c.name;
+        q.dispatchEvent(new Event('input'));
+        document.querySelector('#cmd-list .api-op')?.click();
+      }, 400);
+    },
+  }));
+});
 
 boot();
 

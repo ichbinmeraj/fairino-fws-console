@@ -726,8 +726,8 @@ export class View3D {
     }
   }
 }
- h¤¬      j}uj}uIÏ÷¿       Q    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/view3d.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
-date: Thu, 13 Aug 2026 01:31:32 GMT
+–Uh¤¬      j}%j}%IÏüZ       Q    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/view3d.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
+date: Thu, 13 Aug 2026 01:59:54 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
@@ -735,7 +735,7 @@ content-length: 26513
 last-modified: Thu, 13 Aug 2026 01:15:59 GMT
 etag: "a88b3c7d8b0bf6c7e133402b210b705c"
 cache-control: no-cache
- original-response-headers date: Thu, 13 Aug 2026 01:31:32 GMT
+ original-response-headers date: Thu, 13 Aug 2026 01:59:54 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
@@ -743,4 +743,4 @@ content-length: 26513
 last-modified: Thu, 13 Aug 2026 01:15:59 GMT
 etag: "a88b3c7d8b0bf6c7e133402b210b705c"
 cache-control: no-cache
- ctid 2 net-response-time-onstart 32 net-response-time-onstop 36   g‘
+ ctid 2 net-response-time-onstart 34 net-response-time-onstop 44   g‘

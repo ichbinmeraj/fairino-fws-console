@@ -735,8 +735,8 @@ function drawFrontLayer() {
   }
   triad(g);
 }
-Þ¦°ÍÍ³      j}uj}uIÏ÷¿       W    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/stage-worker.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
-date: Thu, 13 Aug 2026 01:31:32 GMT
+=ëÍ³      j}%j}%IÏüZ       W    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/stage-worker.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
+date: Thu, 13 Aug 2026 01:59:54 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
@@ -744,7 +744,7 @@ content-length: 24446
 last-modified: Thu, 13 Aug 2026 01:21:42 GMT
 etag: "5e58611b7b261e268717b37bc4e7bd7c"
 cache-control: no-cache
- original-response-headers date: Thu, 13 Aug 2026 01:31:32 GMT
+ original-response-headers date: Thu, 13 Aug 2026 01:59:54 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
@@ -752,4 +752,4 @@ content-length: 24446
 last-modified: Thu, 13 Aug 2026 01:21:42 GMT
 etag: "5e58611b7b261e268717b37bc4e7bd7c"
 cache-control: no-cache
- ctid 2 net-response-time-onstart 20 net-response-time-onstop 26   _~
+ ctid 2 net-response-time-onstart 12 net-response-time-onstop 14   _~
