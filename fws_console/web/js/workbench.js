@@ -77,6 +77,8 @@ export async function develop(root, api, log, toast) {
                   title="Upload to the controller (Ctrl+S)">Save</button>
           <button class="btn btn-sm btn-ghost" id="wb-check" data-cmd="1"
                   title="Save, then compile on the controller">Check</button>
+          <button class="btn btn-sm btn-ghost" id="wb-sim"
+                  title="Animate the program's literal-pose moves as a ghost — the robot does not move">Sim</button>
           <button class="btn btn-sm" id="wb-load" data-cmd="1"
                   title="Make this the controller's loaded program">Load</button>
           <button class="btn btn-sm btn-primary" id="wb-run" data-cmd="1">
@@ -295,6 +297,37 @@ export async function develop(root, api, log, toast) {
       say(`${openName}: ${bad ? 'REJECTED' : 'compiled clean'}`
         + (r.verdict ? ` — ${JSON.stringify(r.verdict)}` : ''), bad ? 'err' : 'ok');
     } catch (e) { say(`check: ${e.message}`, 'err'); }
+  };
+
+  // Sim run: extract the literal-pose moves (MoveJ/MoveL carry j1..j6 as
+  // their first six args) and animate a ghost through them. Named-point
+  // calls (PTP/Lin) resolve inside the controller's point database, which
+  // this console cannot read as a whole — they are counted and reported,
+  // never silently dropped. No robot command is sent; no lease is needed.
+  $('#wb-sim').onclick = () => {
+    const src = ta.value;
+    const waypoints = [];
+    for (const m of src.matchAll(/\b(?:MoveJ|MoveL)\s*\(([^)]*)\)/g)) {
+      const args = m[1].split(',').map((s) => parseFloat(s));
+      if (args.length >= 6 && args.slice(0, 6).every(Number.isFinite)) {
+        waypoints.push(args.slice(0, 6));
+      }
+    }
+    const named = (src.match(/\b(?:PTP|Lin)\s*\(/g) || []).length;
+    if (!waypoints.length) {
+      say(named
+        ? `nothing to simulate: ${named} named-point move(s) resolve on the controller; only literal-pose MoveJ/MoveL can be simulated here`
+        : 'nothing to simulate: no literal-pose MoveJ/MoveL in this program', 'err');
+      return;
+    }
+    if (named) {
+      say(`simulating ${waypoints.length} literal move(s); ${named} named-point move(s) NOT simulated (they resolve on the controller)`);
+    } else {
+      say(`simulating ${waypoints.length} move(s) — ghost only, robot untouched`);
+    }
+    document.dispatchEvent(new CustomEvent('fws-sim-run', {
+      detail: { waypoints, speed: 25 },
+    }));
   };
 
   $('#wb-load').onclick = async () => {

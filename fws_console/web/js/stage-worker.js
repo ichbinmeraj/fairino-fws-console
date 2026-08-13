@@ -26,6 +26,7 @@ let points = null;       // [[x,y,z],...]
 let frames = null;       // [{R:[[..]],p:[..]}]
 let model = null;        // {reach, isSim}
 let hl = -1;             // joint index a jog control is about to drive
+let ghost = null;        // simulated pose points — drawn translucent, never solid
 const trail = [];
 
 let sig = '';
@@ -39,6 +40,13 @@ function keyLight() {
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const l0x = -0.42, l0y = 0.32;
   return [l0x * cy + l0y * sy, -l0x * sy + l0y * cy, 0.85];
+}
+
+/** Cheap change-signature for the ghost pose (tip position, quantised). */
+function ghostSig() {
+  if (!ghost || !ghost.length) return 'g0';
+  const t = ghost[ghost.length - 1];
+  return `g${Math.round(t[0])},${Math.round(t[1])},${Math.round(t[2])}`;
 }
 
 const hexRgb = (s) => {
@@ -344,6 +352,42 @@ function drawTrail(g) {
   }
 }
 
+/** Simulated pose, drawn as a translucent dashed skeleton with hollow
+ * joints — unmistakably NOT the real arm. Used by the sim-run preview. */
+function drawGhost(g) {
+  if (!ghost || ghost.length < 2) return;
+  const proj = ghost.map((p) => project(p));
+  g.strokeStyle = theme.accent;
+  g.globalAlpha = 0.5;
+  g.lineWidth = 4;
+  g.lineCap = 'round';
+  g.setLineDash([7, 5]);
+  g.beginPath();
+  for (let i = 0; i < proj.length; i++) {
+    const p = proj[i];
+    if (clipped(p)) continue;
+    i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]);
+  }
+  g.stroke();
+  g.setLineDash([]);
+  g.lineWidth = 1.8;
+  for (let i = 0; i < proj.length; i++) {
+    const p = proj[i];
+    if (clipped(p)) continue;
+    g.beginPath();
+    g.arc(p[0], p[1], i === proj.length - 1 ? 6 : 4.5, 0, Math.PI * 2);
+    g.stroke();
+  }
+  // Label it, so a screenshot can never be mistaken for the live arm.
+  const tip = proj[proj.length - 1];
+  if (!clipped(tip)) {
+    g.font = '10px ui-monospace, monospace';
+    g.fillStyle = theme.accent;
+    g.fillText('SIM', tip[0] + 9, tip[1] - 8);
+  }
+  g.globalAlpha = 1;
+}
+
 /** Accent ring around the joint a jog control is about to drive. */
 function highlightRing(g) {
   if (hl < 0 || !points || hl >= points.length) return;
@@ -516,7 +560,7 @@ function draw() {
     }
   }
   const now = `${yaw},${pitch},${dist},${zc.toFixed(1)},${W},${H},`
-    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark},${hl}`;
+    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark},${hl},${ghostSig()}`;
   if (now === sig) return;
   sig = now;
 
@@ -542,6 +586,7 @@ function draw() {
   if (meshes && frames) drawMeshes(g);
   else drawSkeleton(g);
 
+  drawGhost(g);
   tcpMarkers(g);
   highlightRing(g);
   cornerGizmo(g);
@@ -559,7 +604,7 @@ function drawGLLayers() {
     }
   }
   const now = `${yaw},${pitch},${dist},${zc.toFixed(1)},${W},${H},`
-    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark},${hl}`;
+    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark},${hl},${ghostSig()}`;
   if (now === sig) return;
   sig = now;
 
@@ -699,6 +744,10 @@ function handleMessage(m) {
     case 'camera':
       yaw = m.yaw; pitch = m.pitch; dist = m.dist;
       if (m.zc !== undefined) zc = m.zc;
+      schedule();
+      break;
+    case 'ghost':
+      ghost = Array.isArray(m.points) && m.points.length ? m.points : null;
       schedule();
       break;
     case 'highlight':
@@ -945,6 +994,7 @@ function drawFrontLayer() {
     return;
   }
   drawTrail(g);
+  drawGhost(g);
   tcpMarkers(g);
   highlightRing(g);
   cornerGizmo(g);

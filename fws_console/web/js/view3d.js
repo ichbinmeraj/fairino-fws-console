@@ -325,6 +325,15 @@ export class View3D {
     raf = requestAnimationFrame(tick);
   }
 
+  /** Show (or clear, with null) a simulated pose — drawn as a translucent
+   * dashed skeleton labelled SIM, never mistakable for the live arm. */
+  setGhost(points) {
+    const g = Array.isArray(points) && points.length ? points : null;
+    if (this.worker) { this._post({ type: 'ghost', points: g }); return; }
+    this._ghost = g;
+    this.draw();
+  }
+
   /** Tint the link (and ring the joint) a jog control is about to drive;
    * -1 clears. */
   highlightJoint(i) {
@@ -505,7 +514,8 @@ export class View3D {
     }
     const sig = `${this.yaw},${this.pitch},${this.dist},${this.zc.toFixed(1)},${this.w},`
       + `${this.h},${!this.points},${ph},${this.trail.length},`
-      + `${this.meshes ? 1 : 0},${this._isDark()},${this._hl ?? -1}`;
+      + `${this.meshes ? 1 : 0},${this._isDark()},${this._hl ?? -1},`
+      + `${this._ghost ? this._ghost[this._ghost.length - 1].map(Math.round) : 'g0'}`;
     if (sig === this._sig) return;
     this._sig = sig;
 
@@ -536,9 +546,44 @@ export class View3D {
       this._drawSkeleton(g, line2, dim, text, accent, data);
     }
 
+    this._drawGhost(g, accent);
     this._tcpMarkers(g, dim);
     this._ring(g, accent);
     this._gizmo(g);
+  }
+
+  _drawGhost(g, accent) {
+    const gh = this._ghost;
+    if (!gh || gh.length < 2) return;
+    const proj = gh.map((p) => this.project(p));
+    g.strokeStyle = accent;
+    g.globalAlpha = 0.5;
+    g.lineWidth = 4;
+    g.lineCap = 'round';
+    g.setLineDash([7, 5]);
+    g.beginPath();
+    for (let i = 0; i < proj.length; i++) {
+      const p = proj[i];
+      if (this._clipped(p)) continue;
+      i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]);
+    }
+    g.stroke();
+    g.setLineDash([]);
+    g.lineWidth = 1.8;
+    for (let i = 0; i < proj.length; i++) {
+      const p = proj[i];
+      if (this._clipped(p)) continue;
+      g.beginPath();
+      g.arc(p[0], p[1], i === proj.length - 1 ? 6 : 4.5, 0, Math.PI * 2);
+      g.stroke();
+    }
+    const tip = proj[proj.length - 1];
+    if (!this._clipped(tip)) {
+      g.font = '10px ui-monospace, monospace';
+      g.fillStyle = accent;
+      g.fillText('SIM', tip[0] + 9, tip[1] - 8);
+    }
+    g.globalAlpha = 1;
   }
 
   /** Near-plane test for the 2D paths (mirrors the worker). */

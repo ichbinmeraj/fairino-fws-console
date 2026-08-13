@@ -48,6 +48,15 @@ itself at `/console`.
 
 ### Added
 
+- **Sim run — dry-run motion in the 3D view, robot untouched.** Teach's
+  *Sim run* animates a translucent dashed ghost (labelled SIM) through the
+  taught points; Develop's *Sim* does the same for a program's literal-pose
+  MoveJ/MoveL lines (named-point moves are counted and reported as
+  not-simulated — they resolve inside the controller). The ghost is driven
+  by the same measured kinematic model as the live arm, over the live arm;
+  the whole sim path is API-free by construction and a test pins that it
+  can never send a robot command. (Full-stack simulation without hardware
+  is unchanged: `fws-console --simulator`.)
 - **Teach — points, frames and work objects, as this gateway actually
   supports them.** Capture the live pose into a console-side point store
   (this firmware has no per-point write: no RPC exists and the Lua path is a

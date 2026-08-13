@@ -117,6 +117,19 @@ class TestDeveloperPanels:
         assert "GetRobotTeachingPoint" in src
         assert "confirmGateway" in src, "frame/table writes keep the confirm flow"
 
+    def test_sim_run_can_never_command_the_robot(self):
+        """Sim run animates a ghost through waypoints in the 3D view. Its
+        entire path — panel dispatch, shell animation, renderer — must be
+        API-free: the one thing a simulation must never do is move the arm."""
+        main = (WEB / "js" / "main.js").read_text()
+        start = main.index("function simRun")
+        end = main.index("document.addEventListener('fws-sim-run'")
+        body = main[start:end]
+        assert "api." not in body, "simRun must never touch the gateway API"
+        assert "setGhost" in body, "simRun drives only the ghost channel"
+        # and the renderer labels it so a screenshot cannot lie
+        assert "'SIM'" in (WEB / "js" / "stage-worker.js").read_text()
+
     def test_escape_in_fullscreen_never_reaches_stop(self):
         """The browser overlay says 'press Esc to exit full screen'; obeying
         it must never fire the Esc=STOP robot command."""

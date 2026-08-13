@@ -263,6 +263,66 @@ $('fault-banner-reset').onclick = () => run('reset faults', () => api.resetError
 $('btn-stop').onclick = () => run('STOP', () => api.stop(), { priority: true });
 $('btn-trail').onclick = () => view.clearTrail();
 
+// ---- Sim run: dry-run motion in the 3D view, robot untouched -------------
+// Panels dispatch 'fws-sim-run' with {waypoints: [[j1..j6],...], speed} and
+// the shell animates a translucent SIM ghost through them using the SAME
+// measured kinematic model the live arm is drawn with. No robot command is
+// ever sent; the live arm stays live underneath.
+let simCancel = null;
+function simStop() {
+  if (simCancel) simCancel();
+  view.setGhost(null);
+}
+function simRun(waypoints, speedPct) {
+  simStop();
+  if (!waypoints || waypoints.length === 0 || !model.points) return;
+  selectTab('operate');                    // the ghost lives on the stage
+  const speed = Math.min(100, Math.max(1, speedPct || 25));
+  const DEG_S = 90 * (speed / 100);        // nominal joint speed at 100%
+  // Segment list: from the CURRENT arm pose into waypoint 0, then onward.
+  const start = pendingFrame && pendingFrame.joints
+    ? pendingFrame.joints.slice(0, 6) : waypoints[0];
+  const path = [start, ...waypoints];
+  let seg = 0;
+  let t0 = performance.now();
+  let segDur = 0;
+  const segTime = (a, b) => {
+    let worst = 0;
+    for (let i = 0; i < 6; i++) worst = Math.max(worst, Math.abs(b[i] - a[i]));
+    return Math.max(250, (worst / DEG_S) * 1000);
+  };
+  segDur = segTime(path[0], path[1]);
+  let raf = 0;
+  let done = false;
+  simCancel = () => { cancelAnimationFrame(raf); simCancel = null; };
+  log(`sim run: ${waypoints.length} waypoint${waypoints.length > 1 ? 's' : ''} at ${speed}% — ghost only, robot untouched`, 'ok');
+  const tick = (now) => {
+    let u = (now - t0) / segDur;
+    while (u >= 1 && seg < path.length - 2) {
+      seg++;
+      t0 += segDur;
+      segDur = segTime(path[seg], path[seg + 1]);
+      u = (now - t0) / segDur;
+    }
+    if (u >= 1 && seg >= path.length - 2) { u = 1; done = true; }
+    const e = u < 0 ? 0 : u > 1 ? 1 : (1 - Math.cos(Math.PI * u)) / 2;  // ease
+    const a = path[seg], b = path[seg + 1];
+    const j = a.map((v, i) => v + (b[i] - v) * e);
+    const fr = model.frames ? model.frames(j) : null;
+    view.setGhost(model.points(j, toolOffset, fr));
+    if (!done) { raf = requestAnimationFrame(tick); return; }
+    simCancel = null;
+    log('sim run complete', 'ok');
+    setTimeout(() => { if (!simCancel) view.setGhost(null); }, 1500);
+  };
+  raf = requestAnimationFrame(tick);
+}
+document.addEventListener('fws-sim-run', (e) => {
+  const d = e.detail || {};
+  simRun(d.waypoints, d.speed);
+});
+document.addEventListener('fws-sim-stop', simStop);
+
 // The corners icon promises FULLSCREEN, so that is what it does. (It used
 // to call view.fit(), which re-frames an already-framed arm — a visible
 // no-op that read as "button broken".) The stage zone goes fullscreen; the

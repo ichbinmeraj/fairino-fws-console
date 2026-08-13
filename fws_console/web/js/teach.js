@@ -86,9 +86,10 @@ export async function teach(root, api, log, toast) {
         <div class="field-row" style="margin-top:10px">
           <label>speed %</label>
           <input id="tp-speed" type="number" value="25" min="1" max="100" style="width:70px">
+          <button class="btn btn-sm btn-primary" id="tp-sim">Sim run</button>
           <button class="btn btn-sm" id="tp-gen">Generate program</button>
-          <span class="small faint">literal-pose MoveJ — the gateway can
-            pre-flight every target</span>
+          <span class="small faint">Sim run animates a ghost through the
+            points in the 3D view — the robot does not move</span>
         </div>
       </div>
 
@@ -251,6 +252,17 @@ export async function teach(root, api, log, toast) {
     $id('#tp-name').value = '';
     log(`taught ${name}`, 'ok');
     renderPoints();
+  };
+
+  $id('#tp-sim').onclick = () => {
+    const pts = loadPoints();
+    if (!pts.length) { toast('capture at least one point first', 'warn'); return; }
+    document.dispatchEvent(new CustomEvent('fws-sim-run', {
+      detail: {
+        waypoints: pts.map((p) => p.joints),
+        speed: Number($id('#tp-speed').value) || 25,
+      },
+    }));
   };
 
   $id('#tp-gen').onclick = async () => {
