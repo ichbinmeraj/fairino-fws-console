@@ -102,9 +102,28 @@ class TestDeveloperPanels:
         assert (js / "devpanels.js").is_file()
         main = (js / "main.js").read_text()
         assert "devpanels.js" in main, "main.js does not import the dev panels"
-        for tab in ("develop", "config", "commands", "lua", "api", "files",
-                    "system"):
+        for tab in ("develop", "teach", "config", "commands", "lua", "api",
+                    "files", "system"):
             assert f"'{tab}'" in main, f"tab {tab} is not registered"
+
+    def test_the_teach_panel_never_promises_per_point_writes(self):
+        """The controller cannot accept a single named point (no RPC; the Lua
+        path is a confirmed silent no-op) — the panel must say so, and its
+        generated programs must use literal poses so the gateway's path
+        pre-flight keeps working."""
+        src = (WEB / "js" / "teach.js").read_text()
+        assert "no per-point write" in src
+        assert "MoveJ(" in src, "generated programs use literal-pose moves"
+        assert "GetRobotTeachingPoint" in src
+        assert "confirmGateway" in src, "frame/table writes keep the confirm flow"
+
+    def test_escape_in_fullscreen_never_reaches_stop(self):
+        """The browser overlay says 'press Esc to exit full screen'; obeying
+        it must never fire the Esc=STOP robot command."""
+        main = (WEB / "js" / "main.js").read_text()
+        i_esc = main.index("if (e.key === 'Escape')")
+        assert "document.fullscreenElement" in main[i_esc:i_esc + 900], (
+            "the Escape handler must yield while fullscreen is active")
 
     def test_the_workbench_ships_and_its_editor_escapes(self):
         """The Develop workbench is the edit→compile→run→watch loop in one

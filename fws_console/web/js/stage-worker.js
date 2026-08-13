@@ -25,10 +25,29 @@ let zc = 0;
 let points = null;       // [[x,y,z],...]
 let frames = null;       // [{R:[[..]],p:[..]}]
 let model = null;        // {reach, isSim}
+let hl = -1;             // joint index a jog control is about to drive
 const trail = [];
 
 let sig = '';
 let rafPending = false;
+
+/** Camera-locked key light: the "over the operator's left shoulder" light,
+ * rotated by the camera yaw so it stays over the VIEWER's shoulder at any
+ * orbit — a world-fixed key goes behind the subject at 180° and the arm
+ * turns dull and flat. */
+function keyLight() {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const l0x = -0.42, l0y = 0.32;
+  return [l0x * cy + l0y * sy, -l0x * sy + l0y * cy, 0.85];
+}
+
+const hexRgb = (s) => {
+  const h = String(s || '').replace('#', '');
+  return h.length >= 6
+    ? [parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255,
+       parseInt(h.slice(4, 6), 16) / 255]
+    : [0.25, 0.62, 0.91];
+};
 
 /* ---------------------------------------------------------------- normals */
 
@@ -103,6 +122,12 @@ function buildLUT(dark) {
 
 /* ---------------------------------------------------------------- paint */
 
+// The near plane for the 2D projection paths. Without it, a point closer
+// than the camera makes dist+y2 negative: the scale flips sign and grid or
+// trail segments mirror across the screen as garbage streaks (the GL path
+// is safe — negative w clips on the GPU; these CPU paths are not).
+const NEAR = 80;
+
 function project(p) {
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
@@ -112,24 +137,79 @@ function project(p) {
   const y2 = y1 * cp - z1 * sp;
   const z2 = y1 * sp + z1 * cp;
   const f = Math.min(W, H) * 2.2;
-  const s = f / (dist + y2);
+  const den = dist + y2;
+  const s = f / (den < NEAR ? NEAR : den);
   return [W / 2 + x1 * s, H / 2 - z2 * s, y2];
 }
 
-function grid(g, line) {
-  const step = 200, n = 5;
-  g.strokeStyle = line;
+/** True when a projected point sits at/behind the near plane — its screen
+ * position is clamped, so segments touching it should be skipped. */
+const clipped = (p) => dist + p[2] < NEAR;
+
+// AXIS_COLORS shared by the origin marker and the corner gizmo.
+const AXIS_COLORS = ['#ff5d5d', '#54d17a', '#5aa2ff'];
+
+function grid(g, line, line2) {
+  // Hierarchy + edge fade: axis lines strongest, 200 mm majors fading
+  // toward the rim, 100 mm minors only at close zoom. A single-weight grid
+  // with a hard rectangular edge reads as a floating rug.
+  const step = 200, n = 7;
   g.lineWidth = 1;
-  g.globalAlpha = 0.55;
-  for (let i = -n; i <= n; i++) {
-    const a = project([i * step, -n * step, 0]);
-    const b = project([i * step, n * step, 0]);
-    const c = project([-n * step, i * step, 0]);
-    const d = project([n * step, i * step, 0]);
+  const seg = (a, b) => {
+    if (clipped(a) && clipped(b)) return;
     g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
-    g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.stroke();
+  };
+  for (let i = -n; i <= n; i++) {
+    const fade = 1 - (Math.abs(i) / n) ** 2;
+    g.strokeStyle = i === 0 ? line2 : line;
+    g.globalAlpha = i === 0 ? 0.8 : 0.12 + 0.38 * fade;
+    seg(project([i * step, -n * step, 0]), project([i * step, n * step, 0]));
+    seg(project([-n * step, i * step, 0]), project([n * step, i * step, 0]));
+  }
+  if (dist < 1600) {
+    g.strokeStyle = line;
+    g.globalAlpha = 0.18;
+    const m = 100;
+    for (let i = -n * 2 + 1; i < n * 2; i += 2) {
+      seg(project([i * m, -n * step, 0]), project([i * m, n * step, 0]));
+      seg(project([-n * step, i * m, 0]), project([n * step, i * m, 0]));
+    }
   }
   g.globalAlpha = 1;
+}
+
+/** Soft contact shadows under the joints: the one cue that anchors the arm
+ * to the floor instead of floating above it. Drawn as world-space ellipses
+ * projected through the camera, so they foreshorten correctly. */
+function contactShadows(g) {
+  if (!points) return;
+  const spots = [];
+  for (let i = 0; i < points.length; i++) {
+    spots.push(points[i]);
+    if (i < points.length - 1) {
+      const q = points[i + 1];
+      spots.push([(points[i][0] + q[0]) / 2, (points[i][1] + q[1]) / 2,
+                  (points[i][2] + q[2]) / 2]);
+    }
+  }
+  for (const p of spots) {
+    const z = Math.max(0, p[2]);
+    const alpha = 0.20 * Math.max(0, 1 - z / 1400);
+    if (alpha <= 0.01) continue;
+    const r = 55 + 0.06 * z;
+    const c = project([p[0], p[1], 0]);
+    const u = project([p[0] + r, p[1], 0]);
+    const v = project([p[0], p[1] + r, 0]);
+    if (clipped(c)) continue;
+    g.save();
+    g.transform(u[0] - c[0], u[1] - c[1], v[0] - c[0], v[1] - c[1], c[0], c[1]);
+    const grad = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+    grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(-1, -1, 2, 2);
+    g.restore();
+  }
 }
 
 function envelope(g, line, reach) {
@@ -138,33 +218,142 @@ function envelope(g, line, reach) {
   g.setLineDash([4, 5]);
   g.lineWidth = 1;
   g.beginPath();
+  let pen = false;
   for (let a = 0; a <= 360; a += 6) {
     const p = project([reach * Math.cos(a * Math.PI / 180),
                        reach * Math.sin(a * Math.PI / 180), 0]);
-    a ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]);
+    if (clipped(p)) { pen = false; continue; }
+    pen ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]);
+    pen = true;
   }
   g.stroke();
   g.setLineDash([]);
   g.globalAlpha = 1;
 }
 
-function triad(g) {
-  const L = 220;
+/** Small unlabeled origin marker, drawn BEHIND the arm (back layer) so the
+ * robot correctly occludes it. Navigation labels live on the corner gizmo. */
+function originMarker(g) {
+  const L = 70;
   const o = project([0, 0, 0]);
-  const axes = [
-    [[L, 0, 0], '#ff5d5d', 'X'],
-    [[0, L, 0], '#54d17a', 'Y'],
-    [[0, 0, L], '#5aa2ff', 'Z'],
-  ];
-  g.lineWidth = 2;
-  g.font = '11px ui-monospace, monospace';
-  for (const [v, col, name] of axes) {
-    const p = project(v);
-    g.strokeStyle = col;
+  const ends = [[L, 0, 0], [0, L, 0], [0, 0, L]];
+  g.lineWidth = 1.5;
+  for (let i = 0; i < 3; i++) {
+    const p = project(ends[i]);
+    if (clipped(p) || clipped(o)) continue;
+    g.strokeStyle = AXIS_COLORS[i];
+    g.globalAlpha = 0.8;
     g.beginPath(); g.moveTo(o[0], o[1]); g.lineTo(p[0], p[1]); g.stroke();
-    g.fillStyle = col;
-    g.fillText(name, p[0] + 4, p[1] - 2);
   }
+  g.globalAlpha = 1;
+}
+
+/** Screen-fixed navigation gizmo: a mini triad in the corner that rotates
+ * with the camera but never occludes the scene and never swims. */
+function cornerGizmo(g) {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  // Above the TCP readout chip that owns the true bottom-left corner.
+  const ox = 44, oy = H - 128, S = 26;
+  g.lineWidth = 2;
+  g.font = '10px ui-monospace, monospace';
+  const names = ['X', 'Y', 'Z'];
+  const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let i = 0; i < 3; i++) {
+    const [ax, ay, az] = axes[i];
+    const x1 = ax * cy - ay * sy;
+    const y1 = ax * sy + ay * cy;
+    const z2 = y1 * sp + (az) * cp;
+    const px = ox + x1 * S, py = oy - z2 * S;
+    g.strokeStyle = AXIS_COLORS[i];
+    g.globalAlpha = 0.9;
+    g.beginPath(); g.moveTo(ox, oy); g.lineTo(px, py); g.stroke();
+    g.fillStyle = AXIS_COLORS[i];
+    g.fillText(names[i], px + 3, py - 2);
+  }
+  g.globalAlpha = 1;
+}
+
+/** TCP context: a small tool triad at the flange (orientation at a glance)
+ * and a dashed plumb line to the floor — the classic industrial cue that
+ * makes Z height and XY position over the table instantly legible. */
+function tcpMarkers(g) {
+  if (!points || !points.length) return;
+  const tip = points[points.length - 1];
+  const foot = project([tip[0], tip[1], 0]);
+  const tp = project(tip);
+  if (!clipped(tp) && !clipped(foot)) {
+    g.strokeStyle = theme.dim;
+    g.globalAlpha = 0.65;
+    g.lineWidth = 1;
+    g.setLineDash([3, 4]);
+    g.beginPath(); g.moveTo(tp[0], tp[1]); g.lineTo(foot[0], foot[1]); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = theme.dim;
+    g.beginPath(); g.arc(foot[0], foot[1], 2.5, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 1;
+  }
+  if (frames && frames.length) {
+    const F = frames[frames.length - 1];
+    if (F && F.R) {
+      const L = 55;
+      const o = project(F.p);
+      for (let i = 0; i < 3; i++) {
+        const e = project([F.p[0] + F.R[0][i] * L,
+                           F.p[1] + F.R[1][i] * L,
+                           F.p[2] + F.R[2][i] * L]);
+        if (clipped(e) || clipped(o)) continue;
+        g.strokeStyle = AXIS_COLORS[i];
+        g.lineWidth = 1.5;
+        g.beginPath(); g.moveTo(o[0], o[1]); g.lineTo(e[0], e[1]); g.stroke();
+      }
+    }
+  }
+}
+
+/** Age-ramped TCP trail: where the motion came from fades, where it is
+ * glows — a constant-alpha polyline has neither direction nor recency. */
+function drawTrail(g) {
+  if (trail.length < 2) return;
+  const CH = 8;
+  const per = Math.ceil(trail.length / CH);
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  g.strokeStyle = theme.accent;
+  for (let k = 0; k < CH; k++) {
+    const from = k * per;
+    const to = Math.min(trail.length - 1, (k + 1) * per);
+    if (from >= to) continue;
+    g.globalAlpha = 0.06 + 0.44 * (k / (CH - 1));
+    g.lineWidth = 1 + 1.4 * (k / (CH - 1));
+    g.beginPath();
+    let pen = false;
+    for (let i = from; i <= to; i++) {
+      const s = project(trail[i]);
+      if (clipped(s)) { pen = false; continue; }
+      pen ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]);
+      pen = true;
+    }
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+  const head = project(trail[trail.length - 1]);
+  if (!clipped(head)) {
+    g.fillStyle = theme.accent;
+    g.beginPath(); g.arc(head[0], head[1], 3, 0, Math.PI * 2); g.fill();
+  }
+}
+
+/** Accent ring around the joint a jog control is about to drive. */
+function highlightRing(g) {
+  if (hl < 0 || !points || hl >= points.length) return;
+  const p = project(points[hl]);
+  if (clipped(p)) return;
+  g.strokeStyle = theme.accent;
+  g.lineWidth = 2.5;
+  g.globalAlpha = 0.9;
+  g.beginPath(); g.arc(p[0], p[1], 13, 0, Math.PI * 2); g.stroke();
+  g.globalAlpha = 1;
 }
 
 function drawSkeleton(g) {
@@ -202,11 +391,11 @@ function drawMeshes(g) {
   const foc = Math.min(W, H) * 2.2;
   const hw = W / 2, hh = H / 2;
 
-  const Lx = -0.42, Ly = 0.32, Lz = 0.85;
+  const [Lx, Ly, Lz] = keyLight();
   const vwx = -syw * cp, vwy = -cyw * cp, vwz = sp;
   let hx = Lx + vwx, hy = Ly + vwy, hz = Lz + vwz;
-  const hl = Math.hypot(hx, hy, hz) || 1;
-  hx /= hl; hy /= hl; hz /= hl;
+  const hn = Math.hypot(hx, hy, hz) || 1;
+  hx /= hn; hy /= hn; hz /= hn;
 
   const MAT = [0, 0, 64, 64, 0, 0, 128];
 
@@ -232,7 +421,8 @@ function drawMeshes(g) {
       const y1 = wx * syw + wy * cyw;
       const z1 = wz - zc;
       const y2 = y1 * cp - z1 * sp;
-      const sc = foc / (dist + y2);
+      const den = dist + y2;
+      const sc = foc / (den < NEAR ? NEAR : den);
       s[i]     = hw + x1 * sc;
       s[i + 1] = hh - (y1 * sp + z1 * cp) * sc;
       s[i + 2] = y2;
@@ -326,13 +516,15 @@ function draw() {
     }
   }
   const now = `${yaw},${pitch},${dist},${zc.toFixed(1)},${W},${H},`
-    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark}`;
+    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark},${hl}`;
   if (now === sig) return;
   sig = now;
 
   const g = ctx;
   g.clearRect(0, 0, W, H);
-  grid(g, theme.line);
+  grid(g, theme.line, theme.line2);
+  originMarker(g);
+  contactShadows(g);
 
   if (!points) {
     g.fillStyle = theme.dim;
@@ -345,23 +537,14 @@ function draw() {
 
   if (model && model.reach) envelope(g, theme.line, model.reach);
 
-  if (trail.length > 1) {
-    g.strokeStyle = theme.accent;
-    g.globalAlpha = 0.35;
-    g.lineWidth = 1.5;
-    g.beginPath();
-    trail.forEach((p, i) => {
-      const s = project(p);
-      i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]);
-    });
-    g.stroke();
-    g.globalAlpha = 1;
-  }
+  drawTrail(g);
 
   if (meshes && frames) drawMeshes(g);
   else drawSkeleton(g);
 
-  triad(g);
+  tcpMarkers(g);
+  highlightRing(g);
+  cornerGizmo(g);
 }
 
 function drawGLLayers() {
@@ -376,7 +559,7 @@ function drawGLLayers() {
     }
   }
   const now = `${yaw},${pitch},${dist},${zc.toFixed(1)},${W},${H},`
-    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark}`;
+    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark},${hl}`;
   if (now === sig) return;
   sig = now;
 
@@ -399,7 +582,14 @@ function schedule() {
   const raf = self.requestAnimationFrame
     ? self.requestAnimationFrame.bind(self)
     : (fn) => setTimeout(fn, 16);
-  raf(() => { rafPending = false; draw(); });
+  raf(() => {
+    rafPending = false;
+    // A painter exception outside handleMessage would otherwise die
+    // silently, leaving a frozen stage with no scrim.
+    try { draw(); } catch (err) {
+      self.postMessage({ type: 'error', message: String(err && err.message || err) });
+    }
+  });
 }
 
 /* ---------------------------------------------------------------- inbox */
@@ -438,13 +628,18 @@ function handleMessage(m) {
       break;
     case 'resize': {
       W = m.w; H = m.h; DPR = m.dpr;
-      const fit2d = (c) => {
+      // The 1.5x cap exists for the CPU full painter, where pixels are
+      // expensive. The GL arm and the thin 2D line layers are nearly free at
+      // native DPR — capping them too made grid hairlines and labels soft
+      // on HiDPI screens.
+      const cpuDpr = Math.min(DPR, 1.5);
+      const fit2d = (c, d) => {
         if (!c) return;
-        c.canvas.width = Math.max(1, Math.round(W * DPR));
-        c.canvas.height = Math.max(1, Math.round(H * DPR));
-        c.setTransform(DPR, 0, 0, DPR, 0, 0);
+        c.canvas.width = Math.max(1, Math.round(W * d));
+        c.canvas.height = Math.max(1, Math.round(H * d));
+        c.setTransform(d, 0, 0, d, 0, 0);
       };
-      fit2d(ctx); fit2d(backCtx); fit2d(frontCtx);
+      fit2d(ctx, cpuDpr); fit2d(backCtx, DPR); fit2d(frontCtx, DPR);
       if (gl) {
         gl.canvas.width = Math.max(1, Math.round(W * DPR));
         gl.canvas.height = Math.max(1, Math.round(H * DPR));
@@ -493,7 +688,9 @@ function handleMessage(m) {
       const tip = points[points.length - 1];
       const last = trail[trail.length - 1];
       if (!last || Math.hypot(tip[0] - last[0], tip[1] - last[1], tip[2] - last[2]) > 3) {
-        trail.push(tip);
+        // Copy, don't alias: structured clone makes it safe today, but a
+        // reference into m.points is a latent bug if messages are ever reused.
+        trail.push([tip[0], tip[1], tip[2]]);
         if (trail.length > 240) trail.shift();
       }
       schedule();
@@ -502,6 +699,11 @@ function handleMessage(m) {
     case 'camera':
       yaw = m.yaw; pitch = m.pitch; dist = m.dist;
       if (m.zc !== undefined) zc = m.zc;
+      schedule();
+      break;
+    case 'highlight':
+      hl = Number.isInteger(m.link) ? m.link : -1;
+      sig = '';
       schedule();
       break;
     case 'clearTrail':
@@ -550,9 +752,12 @@ const FS = `#version 300 es
 precision highp float;
 in vec3 vNrm;
 uniform vec3 uEye;      // toward the camera, world space
+uniform vec3 uLight;    // camera-locked key light, world space
 uniform vec3 uHalfVec;  // light/view half-vector
 uniform float uMat;     // 0 joint, 1 tube, 2 tool
 uniform float uDark;    // 1 dark theme, 0 light
+uniform float uHl;      // 1 = this link is jog-highlighted
+uniform vec3 uAccent;   // page accent color for the highlight tint
 uniform vec3 uInterior;
 out vec4 frag;
 
@@ -581,18 +786,18 @@ void main() {
   // outward faces near-black. Flipping the normal toward the camera works
   // for every face; through openings the z-buffer shows the shell's far
   // wall, slightly dimmed below, so cavities still read as depth.
-  vec3 L = vec3(-0.42, 0.32, 0.85);
   vec3 n = normalize(vNrm);
   float ndv = dot(n, uEye);
   float back = gl_FrontFacing ? 1.0 : 0.72;   // gentle, never black
   if (ndv < 0.0) { n = -n; ndv = -ndv; }
-  float diff = max(0.0, dot(n, L));
+  float diff = max(0.0, dot(n, uLight));
   float ndh = max(0.0, dot(n, uHalfVec));
   float inten = 0.18 + 0.24 * (0.5 + 0.5 * n.z)
               + 0.72 * diff
               + 0.28 * pow(ndh, 6.0) * ndv;
   float t = clamp(inten * back * 44.0 / 63.0, 0.0, 1.0);
-  frag = vec4(ramp(uMat, t, uDark), 1.0);
+  vec3 c = ramp(uMat, t, uDark);
+  frag = vec4(mix(c, uAccent, uHl * 0.30), 1.0);
 }`;
 
 function glInit(canvas) {
@@ -626,8 +831,9 @@ function glInit(canvas) {
     aPos: g.getAttribLocation(prog, 'aPos'),
     aNrm: g.getAttribLocation(prog, 'aNrm'),
     uR: u('uR'), uT: u('uT'), uCamYaw: u('uCamYaw'), uCamPitch: u('uCamPitch'),
-    uCam: u('uCam'), uHalf: u('uHalf'), uEye: u('uEye'),
+    uCam: u('uCam'), uHalf: u('uHalf'), uEye: u('uEye'), uLight: u('uLight'),
     uHalfVec: u('uHalfVec'), uMat: u('uMat'), uDark: u('uDark'),
+    uHl: u('uHl'), uAccent: u('uAccent'),
     uInterior: u('uInterior'),
     links: null,
   };
@@ -682,11 +888,15 @@ function glDraw() {
   g.uniform2f(glp.uHalf, W / 2, H / 2);
 
   const vwx = -sy * cp, vwy = -cy * cp, vwz = sp;
-  let hx = -0.42 + vwx, hy = 0.32 + vwy, hz = 0.85 + vwz;
-  const hl = Math.hypot(hx, hy, hz) || 1;
+  const [klx, kly, klz] = keyLight();
+  let hx = klx + vwx, hy = kly + vwy, hz = klz + vwz;
+  const hn = Math.hypot(hx, hy, hz) || 1;
   g.uniform3f(glp.uEye, vwx, vwy, vwz);
-  g.uniform3f(glp.uHalfVec, hx / hl, hy / hl, hz / hl);
+  g.uniform3f(glp.uLight, klx, kly, klz);
+  g.uniform3f(glp.uHalfVec, hx / hn, hy / hn, hz / hn);
   g.uniform1f(glp.uDark, theme && theme.dark ? 1 : 0);
+  const acc = hexRgb(theme && theme.accent);
+  g.uniform3f(glp.uAccent, acc[0], acc[1], acc[2]);
   const inr = theme && theme.dark ? [15 / 255, 17 / 255, 20 / 255]
     : [70 / 255, 74 / 255, 80 / 255];
   g.uniform3f(glp.uInterior, inr[0], inr[1], inr[2]);
@@ -703,6 +913,7 @@ function glDraw() {
     ]);
     g.uniform3f(glp.uT, fr.p[0], fr.p[1], fr.p[2]);
     g.uniform1f(glp.uMat, GL_MAT[li] ?? 0);
+    g.uniform1f(glp.uHl, li === hl ? 1 : 0);
     g.bindVertexArray(link.vao);
     g.drawArrays(g.TRIANGLES, 0, link.count);
   }
@@ -715,7 +926,9 @@ function drawBackLayer() {
   const g = backCtx;
   if (!g) return;
   g.clearRect(0, 0, W, H);
-  grid(g, theme.line);
+  grid(g, theme.line, theme.line2);
+  originMarker(g);
+  contactShadows(g);
   if (model && model.reach) envelope(g, theme.line, model.reach);
 }
 
@@ -731,17 +944,8 @@ function drawFrontLayer() {
     g.textAlign = 'start';
     return;
   }
-  if (trail.length > 1) {
-    g.strokeStyle = theme.accent;
-    g.globalAlpha = 0.35;
-    g.lineWidth = 1.5;
-    g.beginPath();
-    trail.forEach((p, i) => {
-      const s = project(p);
-      i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]);
-    });
-    g.stroke();
-    g.globalAlpha = 1;
-  }
-  triad(g);
+  drawTrail(g);
+  tcpMarkers(g);
+  highlightRing(g);
+  cornerGizmo(g);
 }

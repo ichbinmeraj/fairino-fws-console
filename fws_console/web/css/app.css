@@ -28,17 +28,30 @@
   --dim: #9299a1;
   --faint: #7c828a;
   --accent: #3f9fe8;
-  --accent-2: #297ab6;
+  /* hover state: brighter than rest — "more energy on approach". The old
+     #297ab6 moved TOWARD the dark on-accent text and fell to 4.07:1. */
+  --accent-2: #5cb0ee;
   --on-accent: #06131d;
   --ok: #43c07a;
   --warn: #e0af3b;
   --danger: #e9504d;
   --on-danger: #ffffff;
+  /* --danger must stay light enough to pass 4.5:1 AS TEXT on --bg/--surface,
+     which makes white text ON it fail. Fills get their own darker red:
+     white on #c62828 = 5.62:1, and vs --bg it still clears the 3:1
+     component boundary. One token per job. */
+  --danger-fill: #c62828;
   --data: #0ca3be;          /* the one chart hue; status colors stay status */
-  --ok-bg: rgba(67, 192, 122, 0.12);
-  --warn-bg: rgba(224, 175, 59, 0.12);
-  --danger-bg: rgba(233, 80, 77, 0.12);
-  --accent-bg: rgba(63, 159, 232, 0.12);
+  /* Syntax colors for the Develop editor. NOT the alarm hues: amber and red
+     are reserved for state that matters (ISA-101); code numbers and robot
+     calls get their own non-alarm identities, measured on the --raised
+     editor ground. */
+  --syn-num: #2fb4cf;
+  --syn-fn: #b39ddb;
+  --ok-bg: color-mix(in srgb, var(--ok) 12%, transparent);
+  --warn-bg: color-mix(in srgb, var(--warn) 12%, transparent);
+  --danger-bg: color-mix(in srgb, var(--danger) 12%, transparent);
+  --accent-bg: color-mix(in srgb, var(--accent) 12%, transparent);
   --shadow: none;
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.45);
   --stage-grid: rgba(146, 153, 161, 0.16);
@@ -75,17 +88,21 @@
   --dim: #585e65;
   --faint: #6a6f74;
   --accent: #0072bc;
-  --accent-2: #3b93d5;
+  /* hover deepens in light (the old #3b93d5 moved toward white text, 3.32:1) */
+  --accent-2: #005d99;
   --on-accent: #ffffff;
   --ok: #008043;
   --warn: #966400;
   --danger: #c92f33;
   --on-danger: #ffffff;
+  --danger-fill: #c92f33;   /* dark enough already; white on it = 5.33:1 */
   --data: #00849c;
-  --ok-bg: rgba(0, 139, 78, 0.10);
-  --warn-bg: rgba(168, 118, 0, 0.10);
-  --danger-bg: rgba(201, 47, 51, 0.10);
-  --accent-bg: rgba(0, 116, 191, 0.10);
+  --syn-num: #00707f;
+  --syn-fn: #6742b8;
+  --ok-bg: color-mix(in srgb, var(--ok) 10%, transparent);
+  --warn-bg: color-mix(in srgb, var(--warn) 10%, transparent);
+  --danger-bg: color-mix(in srgb, var(--danger) 10%, transparent);
+  --accent-bg: color-mix(in srgb, var(--accent) 10%, transparent);
   --shadow: 0 1px 2px rgba(25, 29, 34, 0.06), 0 2px 8px rgba(25, 29, 34, 0.05);
   --shadow-pop: 0 8px 28px rgba(25, 29, 34, 0.18);
   --stage-grid: rgba(88, 94, 101, 0.18);
@@ -212,6 +229,26 @@ header {
 .ann.is-ok span, .ann.is-ok b { color: var(--ok); }
 .ann.is-warn span, .ann.is-warn b { color: var(--warn); }
 .ann.is-bad span, .ann.is-bad b { color: var(--danger); }
+/* IEC shape coding on the indicator itself — hue is never the only signal:
+   circle = normal, diamond = caution, square (the default) = fault. */
+.ann.is-ok .dot { border-radius: 50%; }
+.ann.is-warn .dot { transform: rotate(45deg); border-radius: 1.5px; }
+/* Master-alarm weight: a latched fault lights the WHOLE cell, not just a
+   9px dot — a healthy LINK and a FAULT must never look like siblings.
+   6% is the ceiling: at 8% the danger text drops under 4.5:1. */
+.ann.is-bad {
+  background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+  border-color: var(--danger);
+}
+/* Blink the INDICATOR, keep the text steady (ISA-18.2: blink = alarm). */
+@media (prefers-reduced-motion: no-preference) {
+  .ann.is-bad .dot { animation: ann-flash 1.1s steps(2, jump-none) infinite; }
+}
+@keyframes ann-flash { 50% { opacity: 0.3; } }
+/* Light theme: LED bloom reads as a smudge on paper — etched ring instead. */
+:root[data-theme="light"] .ann.is-ok .dot { box-shadow: 0 0 0 2px var(--ok-bg); }
+:root[data-theme="light"] .ann.is-warn .dot { box-shadow: 0 0 0 2px var(--warn-bg); }
+:root[data-theme="light"] .ann.is-bad .dot { box-shadow: 0 0 0 2px var(--danger-bg); }
 
 nav.rail {
   grid-area: rail;
@@ -231,6 +268,9 @@ nav.rail button {
 nav.rail button:hover { background: var(--hover); color: var(--text); }
 nav.rail button[aria-selected="true"] {
   background: var(--accent-bg); color: var(--accent);
+  /* hard left index mark: a selection signal that survives low vision and
+     color deficiency, where a tint swap alone can vanish */
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 nav.rail button svg { width: 17px; height: 17px; flex: none; }
 nav.rail .rail-foot { margin-top: auto; padding: 8px 4px 2px; }
@@ -289,10 +329,10 @@ section[data-tab] { max-width: 1460px; margin: 0 auto; }
 .btn-primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
 
 .btn-danger {
-  background: var(--danger); border-color: var(--danger); color: var(--on-danger);
-  font-weight: 650;
+  background: var(--danger-fill); border-color: var(--danger-fill);
+  color: var(--on-danger); font-weight: 650;
 }
-.btn-danger:hover:not(:disabled) { filter: brightness(1.1); background: var(--danger); }
+.btn-danger:hover:not(:disabled) { filter: brightness(1.1); background: var(--danger-fill); }
 
 .btn-ghost { border-color: transparent; background: none; color: var(--dim); }
 .btn-ghost:hover:not(:disabled) { background: var(--hover); color: var(--text); }
@@ -433,7 +473,7 @@ tbody tr:last-child td { border-bottom: none; }
   position: sticky; top: 0; z-index: 30;
   margin: -18px -18px 14px;
   border-radius: 0; border: none;
-  background: var(--danger); color: var(--on-danger);
+  background: var(--danger-fill); color: var(--on-danger);
   padding: 10px 18px;
 }
 #fault-banner.show { display: flex; }
@@ -504,7 +544,14 @@ tbody tr:last-child td { border-bottom: none; }
 .stage-overlay .tag.warn { background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--warn); border-color: var(--warn); }
 .stage-overlay .tag.bad { background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--danger); border-color: var(--danger); }
 .stage-bottom { justify-content: space-between; }
-.stage-note { font-size: var(--fs-xs); color: var(--faint); }
+/* Text over the 3D canvas gets its own ground — the scene behind it is
+   uncontrolled, so a bare-color label has no guaranteed contrast. */
+.stage-note {
+  font-size: var(--fs-xs); color: var(--dim);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  backdrop-filter: blur(6px);
+  padding: 3px 8px; border-radius: 6px;
+}
 .stage-top .stage-note {
   max-width: 40%; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; align-self: center;
@@ -519,7 +566,9 @@ tbody tr:last-child td { border-bottom: none; }
 #stage-scrim {
   position: absolute; inset: 0; z-index: 5;
   display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  /* 78%: dense enough that even a white scene behind it cannot pull the
+     warn text under AA (at 55% a bright scene degraded it unboundedly). */
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
   backdrop-filter: blur(1.5px);
   color: var(--warn); font-size: var(--fs-md); font-weight: 650;
   letter-spacing: 0.05em; text-align: center; padding: 20px;
@@ -637,6 +686,9 @@ body[data-stream]:not([data-stream="live"]) #tbl-tcp {
   max-width: none;
 }
 .stage-zone { grid-area: stage; position: relative; overflow: hidden; }
+/* True fullscreen: square the corners and paint an opaque ground so the
+   desktop can never bleed through behind the canvases. */
+.stage-zone:fullscreen { border-radius: 0; background: var(--bg); }
 .side-zone {
   grid-area: side; display: flex; flex-direction: column; gap: 12px;
   min-height: 0;
@@ -672,7 +724,9 @@ body[data-stream]:not([data-stream="live"]) #tbl-tcp {
 .stage-zone { padding: 0; }
 .panel > h2 {
   display: flex; align-items: center; gap: 8px;
-  font-size: var(--fs-2xs); font-weight: 700; color: var(--faint);
+  /* --dim, not --faint: the cockpit zone labels are the most important
+     screen's headers and were its weakest text. */
+  font-size: var(--fs-2xs); font-weight: 700; color: var(--dim);
   text-transform: uppercase; letter-spacing: 0.09em;
   margin: 0 0 10px;
 }
@@ -733,7 +787,10 @@ nav.rail .rail-sep {
 .verb {
   font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 700;
   padding: 2px 5px; border-radius: 4px; min-width: 42px; text-align: center;
-  background: var(--raised); color: var(--dim); flex: none;
+  /* --bg, not --raised: 10px bold status colors need the darkest ground
+     (danger on raised measured 4.42:1 — under AA), and a bg-colored chip
+     inset in a card reads as a recessed well, fitting the bezel language. */
+  background: var(--bg); color: var(--dim); flex: none;
 }
 .v-get { color: var(--ok); }
 .v-post { color: var(--accent); }
@@ -947,7 +1004,7 @@ kbd {
 }
 .wb-gutter {
   padding: 8px 6px 8px 10px; text-align: right; user-select: none;
-  overflow: hidden; flex: none; color: var(--faint);
+  overflow: hidden; flex: none; color: var(--dim);   /* faint fails AA on raised */
   font: 500 var(--fs-sm)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   border-right: 1px solid var(--line);
 }
@@ -967,9 +1024,9 @@ kbd {
 
 .hl-k { color: var(--accent); font-style: normal; }
 .hl-s { color: var(--ok); font-style: normal; }
-.hl-n { color: var(--warn); font-style: normal; }
+.hl-n { color: var(--syn-num); font-style: normal; }
 .hl-c { color: var(--faint); font-style: italic; }
-.hl-f { color: var(--danger); font-style: normal; }
+.hl-f { color: var(--syn-fn); font-style: normal; }
 
 .wb-joints td { padding: 1px 4px; }
 .wb-joints .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -977,6 +1034,14 @@ kbd {
 .wb-outlog { max-height: 110px; overflow-y: auto; }
 .wb-outlog .ok { color: var(--ok); }
 .wb-outlog .err { color: var(--danger); }
+
+/* Teach panel: the six-field offset editors */
+.teach-vec {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  margin-top: 8px;
+}
+.teach-vec label { display: flex; flex-direction: column; gap: 2px; }
+.teach-vec input { width: 100%; }
 
 @media (max-width: 1150px) {
   .wb { display: flex; flex-direction: column; height: auto; }

@@ -48,6 +48,39 @@ itself at `/console`.
 
 ### Added
 
+- **Teach — points, frames and work objects, as this gateway actually
+  supports them.** Capture the live pose into a console-side point store
+  (this firmware has no per-point write: no RPC exists and the Lua path is a
+  confirmed silent no-op — the panel says so instead of pretending);
+  generate a program from taught points using literal-pose MoveJ/MoveL
+  (manual prototypes, arity-verified on this firmware — literal poses keep
+  the gateway's path pre-flight working); read named points from the
+  controller's own teaching database (`GetRobotTeachingPoint`,
+  hardware-verified; 143 = no such point); move whole point tables
+  (download / readback-verified restore / switch); define tool frames
+  (1–15) and work object frames (0–14) with a "use current TCP" capture;
+  and an experimental, honestly-labelled drag-teach toggle with true-state
+  polling. The console lease now also holds the `config` domain so frame
+  and table writes work under the same Take control.
+- **Stage fullscreen.** The expand button now does what its icon promises:
+  true fullscreen of the 3D stage (it previously re-framed an already
+  framed arm — a visible no-op). The icon swaps to a compress glyph,
+  Escape exits natively — and a guard keeps that Escape from reaching the
+  Esc=STOP shortcut, so leaving fullscreen can never halt a running
+  program.
+- **3D view, product-grade.** Contact shadows anchor the arm to the floor;
+  the ground grid gained hierarchy (axis lines, edge fade, close-zoom
+  minors); the TCP trail fades with age, tapers, and carries a head dot; a
+  dashed plumb line and a flange triad make height and orientation legible;
+  a screen-fixed corner gizmo replaces the occluding in-scene axis labels;
+  the key light is camera-locked so the arm never goes flat when orbited;
+  view presets fly (250 ms ease, cancelled instantly by a grab — the drag
+  mapping itself is untouched) and solve their framing at the target
+  orbit; hovering a jog row rings and tints the joint it drives; a
+  near-plane clamp removes mirrored-line artifacts at close zoom; worker
+  render errors now actually reach the page (the old channel was dead);
+  HiDPI screens get full-resolution GL and line layers.
+
 - **Develop — a workbench for writing and testing programs.** The
   edit → compile → load → run → watch loop lived across four tabs and the
   console could not edit at all; now one view holds the controller's program

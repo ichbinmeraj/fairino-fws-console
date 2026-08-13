@@ -161,11 +161,12 @@ export class Api {
  * user presses something that will fail.
  */
 export class Lease {
-  // Both domains: jogging and enable need 'motion'; program load/select/run
-  // checks 'program'. Holding one without the other makes half the console
-  // fail with 423s that look like bugs.
+  // All three domains: jogging and enable need 'motion'; program
+  // load/select/run checks 'program'; frame definitions and point-table
+  // writes (the Teach panel) check 'config'. Holding a subset makes part of
+  // the console fail with 423s that look like bugs.
   constructor(api, { clientId = `console-${Math.random().toString(36).slice(2, 8)}`,
-                     domains = ['motion', 'program'], ttl = 30 } = {}) {
+                     domains = ['motion', 'program', 'config'], ttl = 30 } = {}) {
     this.api = api;
     this.clientId = clientId;
     this.domains = domains;

@@ -5,6 +5,7 @@
 // Everything here is a projection, a depth sort and a stroke.
 
 const RAD = Math.PI / 180;
+const AXIS_COLORS = ['#ff5d5d', '#54d17a', '#5aa2ff'];
 
 /**
  * Per-face unit normals in the link frame, smoothed once at load: the 6 mm
@@ -95,6 +96,22 @@ export class View3D {
           }
           try { this.worker.terminate(); } catch { /* already gone */ }
         };
+        // postMessage from a worker does NOT fire worker.onerror — without
+        // this handler the worker's own error reports (and its gl/2d mode
+        // report) were dropped on the floor and a painter crash froze the
+        // stage silently.
+        this.worker.onmessage = (e) => {
+          const m = e.data || {};
+          if (m.type === 'error') {
+            const ov = document.getElementById('stage-scrim');
+            if (ov) {
+              ov.hidden = false;
+              ov.textContent = `3D view error: ${m.message || 'render failed'}`;
+            }
+          } else if (m.type === 'mode') {
+            this.glMode = Boolean(m.gl);   // false = compatibility rendering
+          }
+        };
         const offMain = canvas.transferControlToOffscreen();
         transferred = true;
         const offBack = backEl.transferControlToOffscreen();
@@ -116,6 +133,15 @@ export class View3D {
     this._bindOrbit();
     this._resize();
     new ResizeObserver(() => this._resize()).observe(canvas);
+    // A pure devicePixelRatio change (window dragged to another monitor,
+    // browser zoom) does not fire the ResizeObserver; re-arm a one-shot
+    // media query at each current DPR.
+    const armDpr = () => {
+      matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+        .addEventListener('change', () => { this._resize(); armDpr(); },
+          { once: true });
+    };
+    armDpr();
   }
 
   _post(msg) { this.worker.postMessage(msg); }
@@ -139,9 +165,11 @@ export class View3D {
   }
 
   _resize() {
-    // 1.5x is visually indistinguishable for shaded triangles and halves
-    // (or quarters) the pixels rasterised per frame on HiDPI displays.
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // The worker gets the true DPR (capped at 2 for sanity) and decides per
+    // layer: the GL arm and thin 2D line layers are nearly free at native
+    // DPR, while its CPU full painter keeps the 1.5 cap. The in-page
+    // fallback IS the CPU painter, so it keeps 1.5 here.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const r = this.c.getBoundingClientRect();
     this.w = r.width;
     this.h = r.height;
@@ -149,9 +177,10 @@ export class View3D {
       this._post({ type: 'resize', w: this.w, h: this.h, dpr });
       return;
     }
-    this.c.width = Math.max(1, Math.round(r.width * dpr));
-    this.c.height = Math.max(1, Math.round(r.height * dpr));
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cpu = Math.min(dpr, 1.5);
+    this.c.width = Math.max(1, Math.round(r.width * cpu));
+    this.c.height = Math.max(1, Math.round(r.height * cpu));
+    this.ctx.setTransform(cpu, 0, 0, cpu, 0, 0);
     this.draw();
   }
 
@@ -161,6 +190,9 @@ export class View3D {
     let pinchDist = 0;
 
     this.c.addEventListener('pointerdown', (e) => {
+      // A grab has full authority: kill any preset fly-to instantly so the
+      // tween can never fight the (frozen) drag mapping.
+      if (this._flyCancel) this._flyCancel();
       this.c.setPointerCapture(e.pointerId);
       if (this.onGrab) this.onGrab();
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -199,51 +231,107 @@ export class View3D {
     }, { passive: false });
   }
 
-  /** Fixed viewpoints, cockpit-style: each snaps to a framed view. */
+  /** Fixed viewpoints, cockpit-style: each flies to a framed view. */
   preset(name) {
     const views = {
       iso: [-35, 22], front: [90, 10], back: [-90, 10],
       left: [0, 10], right: [180, 10], top: [-35, 78],
     };
     const [yawDeg, pitchDeg] = views[name] || views.iso;
-    this.fit();
-    this.yaw = yawDeg * RAD;
-    this.pitch = pitchDeg * RAD;
-    if (this.worker) { this._camera(); return; }
-    this.draw();
+    // Solve the framing AT the target orbit (solving at iso and then
+    // swinging the camera left front/top views misframed).
+    const t = this._solveFit(yawDeg * RAD, pitchDeg * RAD);
+    this._flyTo(t);
   }
 
-  /** Frame the whole arm: reset the orbit, then solve for the camera
-   * distance at which every point of the pose actually fits on screen with
-   * a margin — projected, not guessed from a bounding sphere. */
+  /** Frame the whole arm at the home (iso) orbit. */
   fit() {
-    this.yaw = -35 * Math.PI / 180;
-    this.pitch = 22 * Math.PI / 180;
-    if (this.points && this.points.length) {
-      // stop the vertical centre drifting after the fit is computed
-      const zs = this.points.map((p) => p[2]).concat([0]);
-      this.zc = (Math.min(...zs) + Math.max(...zs)) / 2;
+    this._flyTo(this._solveFit(-35 * RAD, 22 * RAD));
+  }
 
+  /** Solve zc + camera distance so every point of the pose fits on screen
+   * with a margin at the GIVEN orbit — projected, not guessed from a
+   * bounding sphere. Pure: does not disturb the live camera. */
+  _solveFit(yaw, pitch) {
+    const saved = [this.yaw, this.pitch, this.dist, this.zc];
+    this.yaw = yaw;
+    this.pitch = pitch;
+    let dist = 2100;
+    let zc = this.zc;
+    if (this.points && this.points.length) {
+      const zs = this.points.map((p) => p[2]).concat([0]);
+      zc = (Math.min(...zs) + Math.max(...zs)) / 2;
+      this.zc = zc;
       this.dist = 2000;
       for (let pass = 0; pass < 3; pass++) {
         let worst = 0;
         for (const p of this.points.concat([[0, 0, 0]])) {
           const [sx, sy] = this.project(p);
+          // 0.32, not 0.40: the solve bounds JOINT POINTS, but the meshes
+          // extend beyond them (the tool most of all) — at 0.40 a front
+          // view cropped the tool at the frame edge.
           worst = Math.max(worst,
-            Math.abs(sx - this.w / 2) / (this.w * 0.40),
-            Math.abs(sy - this.h / 2) / (this.h * 0.40));
+            Math.abs(sx - this.w / 2) / (this.w * 0.32),
+            Math.abs(sy - this.h / 2) / (this.h * 0.32));
         }
         if (worst < 1e-6) break;
         this.dist = Math.max(700, Math.min(5000, this.dist * worst));
       }
-    } else {
-      this.dist = 2100;
+      dist = this.dist;
     }
+    [this.yaw, this.pitch, this.dist, this.zc] = saved;
+    return { yaw, pitch, dist, zc };
+  }
+
+  _applyCamera() {
     if (this.worker) {
       this._post({ type: 'camera', yaw: this.yaw, pitch: this.pitch,
                    dist: this.dist, zc: this.zc });
       return;
     }
+    this.draw();
+  }
+
+  /** Ease the camera to a target over ~250 ms. Camera state only — the
+   * pointer-drag mapping is untouched, and a grab cancels the tween
+   * immediately (see pointerdown). Honors prefers-reduced-motion. */
+  _flyTo(t) {
+    if (this._flyCancel) this._flyCancel();
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.yaw = t.yaw; this.pitch = t.pitch;
+      this.dist = t.dist; this.zc = t.zc;
+      this._applyCamera();
+      return;
+    }
+    const s = { yaw: this.yaw, pitch: this.pitch, dist: this.dist, zc: this.zc };
+    // Shortest yaw path so LEFT -> RIGHT swings 180°, not 340°.
+    const TAU = Math.PI * 2;
+    const dyaw = ((t.yaw - s.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
+    const t0 = performance.now();
+    const DUR = 250;
+    let raf = 0;
+    this._flyCancel = () => { cancelAnimationFrame(raf); this._flyCancel = null; };
+    const tick = (now) => {
+      const u = Math.min(1, (now - t0) / DUR);
+      const e = 1 - (1 - u) ** 3;              // easeOutCubic
+      this.yaw = s.yaw + dyaw * e;
+      this.pitch = s.pitch + (t.pitch - s.pitch) * e;
+      this.dist = s.dist + (t.dist - s.dist) * e;
+      this.zc = s.zc + (t.zc - s.zc) * e;
+      this._applyCamera();
+      if (u < 1) raf = requestAnimationFrame(tick);
+      else this._flyCancel = null;
+    };
+    raf = requestAnimationFrame(tick);
+  }
+
+  /** Tint the link (and ring the joint) a jog control is about to drive;
+   * -1 clears. */
+  highlightJoint(i) {
+    const link = Number.isInteger(i) ? i : -1;
+    if (this._hl === link) return;
+    this._hl = link;
+    if (this.worker) { this._post({ type: 'highlight', link }); return; }
     this.draw();
   }
 
@@ -263,7 +351,8 @@ export class View3D {
     // Simple pinhole: focal length in px over camera distance in mm. Wheel
     // zoom changes dist; y2 gives per-point perspective.
     const f = Math.min(this.w, this.h) * 2.2;
-    const s = f / (this.dist + y2);
+    const den = this.dist + y2;
+    const s = f / (den < 80 ? 80 : den);   // near-plane clamp: no sign flip
 
     return [this.w / 2 + x1 * s, this.h / 2 - z2 * s, y2];
   }
@@ -416,7 +505,7 @@ export class View3D {
     }
     const sig = `${this.yaw},${this.pitch},${this.dist},${this.zc.toFixed(1)},${this.w},`
       + `${this.h},${!this.points},${ph},${this.trail.length},`
-      + `${this.meshes ? 1 : 0},${this._isDark()}`;
+      + `${this.meshes ? 1 : 0},${this._isDark()},${this._hl ?? -1}`;
     if (sig === this._sig) return;
     this._sig = sig;
 
@@ -424,7 +513,9 @@ export class View3D {
 
     const { line, line2, dim, text, accent, data, ok } = this._theme();
 
-    this._grid(g, line);
+    this._grid(g, line, line2);
+    this._originMarker(g);
+    this._shadows(g);
 
     if (!this.points) {
       g.fillStyle = dim;
@@ -437,19 +528,7 @@ export class View3D {
     // Reach envelope, so an operator can see how close to the edge they are.
     if (this.model && this.model.reach) this._envelope(g, line);
 
-    // TCP trail
-    if (this.trail.length > 1) {
-      g.strokeStyle = accent;
-      g.globalAlpha = 0.35;
-      g.lineWidth = 1.5;
-      g.beginPath();
-      this.trail.forEach((p, i) => {
-        const s = this.project(p);
-        i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]);
-      });
-      g.stroke();
-      g.globalAlpha = 1;
-    }
+    this._trail(g, accent);
 
     if (this.meshes && this.frames) {
       this._drawMeshes(g);
@@ -457,7 +536,165 @@ export class View3D {
       this._drawSkeleton(g, line2, dim, text, accent, data);
     }
 
-    this._triad(g);
+    this._tcpMarkers(g, dim);
+    this._ring(g, accent);
+    this._gizmo(g);
+  }
+
+  /** Near-plane test for the 2D paths (mirrors the worker). */
+  _clipped(p) { return this.dist + p[2] < 80; }
+
+  _keyLight() {
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    const l0x = -0.42, l0y = 0.32;
+    return [l0x * cy + l0y * sy, -l0x * sy + l0y * cy, 0.85];
+  }
+
+  _shadows(g) {
+    if (!this.points) return;
+    const pts = this.points;
+    const spots = [];
+    for (let i = 0; i < pts.length; i++) {
+      spots.push(pts[i]);
+      if (i < pts.length - 1) {
+        const q = pts[i + 1];
+        spots.push([(pts[i][0] + q[0]) / 2, (pts[i][1] + q[1]) / 2,
+                    (pts[i][2] + q[2]) / 2]);
+      }
+    }
+    for (const p of spots) {
+      const z = Math.max(0, p[2]);
+      const alpha = 0.20 * Math.max(0, 1 - z / 1400);
+      if (alpha <= 0.01) continue;
+      const r = 55 + 0.06 * z;
+      const c = this.project([p[0], p[1], 0]);
+      const u = this.project([p[0] + r, p[1], 0]);
+      const v = this.project([p[0], p[1] + r, 0]);
+      if (this._clipped(c)) continue;
+      g.save();
+      g.transform(u[0] - c[0], u[1] - c[1], v[0] - c[0], v[1] - c[1], c[0], c[1]);
+      const grad = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+      grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grad;
+      g.fillRect(-1, -1, 2, 2);
+      g.restore();
+    }
+  }
+
+  _trail(g, accent) {
+    if (this.trail.length < 2) return;
+    const CH = 8;
+    const per = Math.ceil(this.trail.length / CH);
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.strokeStyle = accent;
+    for (let k = 0; k < CH; k++) {
+      const from = k * per;
+      const to = Math.min(this.trail.length - 1, (k + 1) * per);
+      if (from >= to) continue;
+      g.globalAlpha = 0.06 + 0.44 * (k / (CH - 1));
+      g.lineWidth = 1 + 1.4 * (k / (CH - 1));
+      g.beginPath();
+      let pen = false;
+      for (let i = from; i <= to; i++) {
+        const s = this.project(this.trail[i]);
+        if (this._clipped(s)) { pen = false; continue; }
+        pen ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]);
+        pen = true;
+      }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    const head = this.project(this.trail[this.trail.length - 1]);
+    if (!this._clipped(head)) {
+      g.fillStyle = accent;
+      g.beginPath(); g.arc(head[0], head[1], 3, 0, Math.PI * 2); g.fill();
+    }
+  }
+
+  _tcpMarkers(g, dim) {
+    if (!this.points || !this.points.length) return;
+    const tip = this.points[this.points.length - 1];
+    const foot = this.project([tip[0], tip[1], 0]);
+    const tp = this.project(tip);
+    if (!this._clipped(tp) && !this._clipped(foot)) {
+      g.strokeStyle = dim;
+      g.globalAlpha = 0.65;
+      g.lineWidth = 1;
+      g.setLineDash([3, 4]);
+      g.beginPath(); g.moveTo(tp[0], tp[1]); g.lineTo(foot[0], foot[1]); g.stroke();
+      g.setLineDash([]);
+      g.fillStyle = dim;
+      g.beginPath(); g.arc(foot[0], foot[1], 2.5, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 1;
+    }
+    if (this.frames && this.frames.length) {
+      const F = this.frames[this.frames.length - 1];
+      if (F && F.R) {
+        const L = 55;
+        const o = this.project(F.p);
+        for (let i = 0; i < 3; i++) {
+          const e2 = this.project([F.p[0] + F.R[0][i] * L,
+                                   F.p[1] + F.R[1][i] * L,
+                                   F.p[2] + F.R[2][i] * L]);
+          if (this._clipped(e2) || this._clipped(o)) continue;
+          g.strokeStyle = AXIS_COLORS[i];
+          g.lineWidth = 1.5;
+          g.beginPath(); g.moveTo(o[0], o[1]); g.lineTo(e2[0], e2[1]); g.stroke();
+        }
+      }
+    }
+  }
+
+  _ring(g, accent) {
+    const hl = this._hl ?? -1;
+    if (hl < 0 || !this.points || hl >= this.points.length) return;
+    const p = this.project(this.points[hl]);
+    if (this._clipped(p)) return;
+    g.strokeStyle = accent;
+    g.lineWidth = 2.5;
+    g.globalAlpha = 0.9;
+    g.beginPath(); g.arc(p[0], p[1], 13, 0, Math.PI * 2); g.stroke();
+    g.globalAlpha = 1;
+  }
+
+  _originMarker(g) {
+    const L = 70;
+    const o = this.project([0, 0, 0]);
+    const ends = [[L, 0, 0], [0, L, 0], [0, 0, L]];
+    g.lineWidth = 1.5;
+    for (let i = 0; i < 3; i++) {
+      const p = this.project(ends[i]);
+      if (this._clipped(p) || this._clipped(o)) continue;
+      g.strokeStyle = AXIS_COLORS[i];
+      g.globalAlpha = 0.8;
+      g.beginPath(); g.moveTo(o[0], o[1]); g.lineTo(p[0], p[1]); g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+
+  _gizmo(g) {
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    const sp = Math.sin(this.pitch), cp = Math.cos(this.pitch);
+    const ox = 44, oy = this.h - 128, S = 26;
+    g.lineWidth = 2;
+    g.font = '10px ui-monospace, monospace';
+    const names = ['X', 'Y', 'Z'];
+    const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    for (let i = 0; i < 3; i++) {
+      const [ax, ay, az] = axes[i];
+      const x1 = ax * cy - ay * sy;
+      const y1 = ax * sy + ay * cy;
+      const z2 = y1 * sp + az * cp;
+      const px = ox + x1 * S, py = oy - z2 * S;
+      g.strokeStyle = AXIS_COLORS[i];
+      g.globalAlpha = 0.9;
+      g.beginPath(); g.moveTo(ox, oy); g.lineTo(px, py); g.stroke();
+      g.fillStyle = AXIS_COLORS[i];
+      g.fillText(names[i], px + 3, py - 2);
+    }
+    g.globalAlpha = 1;
   }
 
   _drawSkeleton(g, line, dim, fg, accent, tip) {
@@ -550,9 +787,9 @@ export class View3D {
     const hw = this.w / 2, hh = this.h / 2;
     const zc = this.zc, dist = this.dist;
 
-    // Fixed key light from over the operator's left shoulder, plus the
+    // Camera-locked key light over the viewer's left shoulder, plus the
     // light/view half-vector for the specular term.
-    const Lx = -0.42, Ly = 0.32, Lz = 0.85;
+    const [Lx, Ly, Lz] = this._keyLight();
     const vwx = -syw * cp, vwy = -cyw * cp, vwz = sp;   // toward the camera
     let hx = Lx + vwx, hy = Ly + vwy, hz = Lz + vwz;
     const hl = Math.hypot(hx, hy, hz) || 1;
@@ -585,7 +822,8 @@ export class View3D {
         const y1 = wx * syw + wy * cyw;
         const z1 = wz - zc;
         const y2 = y1 * cp - z1 * sp;
-        const sc = foc / (dist + y2);
+        const den = dist + y2;
+        const sc = foc / (den < 80 ? 80 : den);   // near-plane clamp
         s[i]     = hw + x1 * sc;
         s[i + 1] = hh - (y1 * sp + z1 * cp) * sc;
         s[i + 2] = y2;
@@ -689,18 +927,32 @@ export class View3D {
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
 
-  _grid(g, line) {
-    const step = 200, n = 5;
-    g.strokeStyle = line;
+  _grid(g, line, line2) {
+    const step = 200, n = 7;
     g.lineWidth = 1;
-    g.globalAlpha = 0.55;
-    for (let i = -n; i <= n; i++) {
-      const a = this.project([i * step, -n * step, 0]);
-      const b = this.project([i * step, n * step, 0]);
-      const c = this.project([-n * step, i * step, 0]);
-      const d = this.project([n * step, i * step, 0]);
+    const seg = (a, b) => {
+      if (this._clipped(a) && this._clipped(b)) return;
       g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
-      g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.stroke();
+    };
+    for (let i = -n; i <= n; i++) {
+      const fade = 1 - (Math.abs(i) / n) ** 2;
+      g.strokeStyle = i === 0 ? line2 : line;
+      g.globalAlpha = i === 0 ? 0.8 : 0.12 + 0.38 * fade;
+      seg(this.project([i * step, -n * step, 0]),
+          this.project([i * step, n * step, 0]));
+      seg(this.project([-n * step, i * step, 0]),
+          this.project([n * step, i * step, 0]));
+    }
+    if (this.dist < 1600) {
+      g.strokeStyle = line;
+      g.globalAlpha = 0.18;
+      const m = 100;
+      for (let i = -n * 2 + 1; i < n * 2; i += 2) {
+        seg(this.project([i * m, -n * step, 0]),
+            this.project([i * m, n * step, 0]));
+        seg(this.project([-n * step, i * m, 0]),
+            this.project([n * step, i * m, 0]));
+      }
     }
     g.globalAlpha = 1;
   }
@@ -711,35 +963,19 @@ export class View3D {
     g.setLineDash([4, 5]);
     g.lineWidth = 1;
     g.beginPath();
+    let pen = false;
     for (let a = 0; a <= 360; a += 6) {
       const p = this.project([
         this.model.reach * Math.cos(a * RAD),
         this.model.reach * Math.sin(a * RAD),
         0,
       ]);
-      a ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]);
+      if (this._clipped(p)) { pen = false; continue; }
+      pen ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]);
+      pen = true;
     }
     g.stroke();
     g.setLineDash([]);
     g.globalAlpha = 1;
-  }
-
-  _triad(g) {
-    const L = 220;
-    const o = this.project([0, 0, 0]);
-    const axes = [
-      [[L, 0, 0], '#ff5d5d', 'X'],
-      [[0, L, 0], '#54d17a', 'Y'],
-      [[0, 0, L], '#5aa2ff', 'Z'],
-    ];
-    g.lineWidth = 2;
-    g.font = '11px ui-monospace, monospace';
-    for (const [v, col, name] of axes) {
-      const p = this.project(v);
-      g.strokeStyle = col;
-      g.beginPath(); g.moveTo(o[0], o[1]); g.lineTo(p[0], p[1]); g.stroke();
-      g.fillStyle = col;
-      g.fillText(name, p[0] + 4, p[1] - 2);
-    }
   }
 }

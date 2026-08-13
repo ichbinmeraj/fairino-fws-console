@@ -7,6 +7,7 @@ import { MODELS, agreement, modelFor, verdict } from './kin.js';
 import { PANELS } from './panels.js';
 import { DEV_PANELS } from './devpanels.js';
 import { WB_PANELS } from './workbench.js';
+import { TEACH_PANELS } from './teach.js';
 import { invalidateChartTheme, SharedScale, Spark } from './charts.js';
 import {
   closePalette, dialog, openPalette, paletteOpen, registerPalette,
@@ -261,7 +262,31 @@ $('btn-reset').onclick = () => run('reset faults', () => api.resetErrors());
 $('fault-banner-reset').onclick = () => run('reset faults', () => api.resetErrors());
 $('btn-stop').onclick = () => run('STOP', () => api.stop(), { priority: true });
 $('btn-trail').onclick = () => view.clearTrail();
-$('btn-view-fit').onclick = () => view.fit();
+
+// The corners icon promises FULLSCREEN, so that is what it does. (It used
+// to call view.fit(), which re-frames an already-framed arm — a visible
+// no-op that read as "button broken".) The stage zone goes fullscreen; the
+// canvases are inset:0 so they follow, the ResizeObserver reaches the
+// worker, and a re-fit after the size settles keeps the arm centred.
+const stageZone = document.querySelector('.stage-zone');
+$('btn-view-fit').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (stageZone.requestFullscreen) {
+    // Rejected when embedding disallows it (iframe without allow="fullscreen")
+    // — degrade to a visible re-frame rather than a dead-feeling button.
+    stageZone.requestFullscreen().catch(() => view.fit());
+  } else view.fit();                     // no Fullscreen API (iPadOS): re-frame
+};
+document.addEventListener('fullscreenchange', () => {
+  const on = document.fullscreenElement === stageZone;
+  const b = $('btn-view-fit');
+  b.setAttribute('aria-pressed', String(on));
+  b.title = on ? 'Exit fullscreen (Esc)' : 'Fullscreen 3D view';
+  b.querySelector('use').setAttribute('href', on ? '#i-fit-exit' : '#i-fit');
+  // No re-fit here: the projection centres itself at any size, the
+  // ResizeObserver resizes the buffers, and a forced fit() would discard
+  // the operator's chosen orbit on every toggle.
+});
 
 // Esc = stop. The one keyboard shortcut, because reaching for a pointing
 // device mid-surprise is the slow path. Jogging has no keys, deliberately.
@@ -293,6 +318,11 @@ window.addEventListener('keydown', (e) => {
     // preventDefault below) and fired a robot command from a keypress the
     // operator meant as "no".
     if (document.querySelector('dialog[open]')) return;
+    // Fullscreen owns Escape too: the browser overlay says "press Esc to
+    // exit full screen", and an operator obeying it must never fire STOP.
+    // At keydown time fullscreenElement is still set — the exit (and our
+    // fullscreenchange handler) land after this event, so the guard holds.
+    if (document.fullscreenElement) return;
     if (typing) return;                    // let fields clear themselves
     e.preventDefault();
     if (lease.held && !readOnly) {
@@ -341,7 +371,7 @@ $('in-vel').oninput = () => { $('vel-label').textContent = `${$('in-vel').value}
 
 function vel() { return parseFloat($('in-vel').value) || 10; }
 
-function jogRow(host, axisLabel, valId, onMinus, onPlus) {
+function jogRow(host, axisLabel, valId, onMinus, onPlus, joint) {
   const row = document.createElement('div');
   row.className = 'jog-row';
   row.innerHTML = `
@@ -354,6 +384,15 @@ function jogRow(host, axisLabel, valId, onMinus, onPlus) {
   const [minus, plus] = row.querySelectorAll('button');
   minus.onclick = onMinus;
   plus.onclick = onPlus;
+  if (joint !== undefined) {
+    // Point at the joint this row drives: hovering (or focusing) the row
+    // rings that joint in the 3D view, so "which joint is J4?" never needs
+    // a mental model of the kinematic chain.
+    row.addEventListener('pointerenter', () => view.highlightJoint(joint));
+    row.addEventListener('pointerleave', () => view.highlightJoint(-1));
+    row.addEventListener('focusin', () => view.highlightJoint(joint));
+    row.addEventListener('focusout', () => view.highlightJoint(-1));
+  }
   host.append(row);
 }
 
@@ -364,7 +403,8 @@ function buildJogPads() {
     // Gateway direction contract is 0/1 (Fairino wire convention), NOT ±1.
     jogRow(pad, `J${j}`, `jog-val-${j}`,
       () => run(`jog J${j} −${step}°`, () => api.jog(j, 0, step, vel()), { quiet: true }),
-      () => run(`jog J${j} +${step}°`, () => api.jog(j, 1, step, vel()), { quiet: true }));
+      () => run(`jog J${j} +${step}°`, () => api.jog(j, 1, step, vel()), { quiet: true }),
+      j);   // pose point j is the joint J_j position (0 is the base)
   }
   const lin = $('jogpad-lin');
   lin.innerHTML = '';
@@ -698,6 +738,7 @@ const TABS = [
   ['io', 'I/O', 'i-io'],
   ['force', 'Force', 'i-force'],
   ['develop', 'Develop', 'i-develop', 'dev'],
+  ['teach', 'Teach', 'i-teach'],
   ['config', 'Config', 'i-config'],
   ['commands', 'Commands', 'i-cmd'],
   ['lua', 'Lua', 'i-lua'],
@@ -708,7 +749,7 @@ const TABS = [
   ['audit', 'Audit', 'i-audit'],
 ];
 
-const ALL_PANELS = { ...PANELS, ...DEV_PANELS, ...WB_PANELS };
+const ALL_PANELS = { ...PANELS, ...DEV_PANELS, ...WB_PANELS, ...TEACH_PANELS };
 
 const loaded = new Set(['operate']);
 let currentTab = null;
