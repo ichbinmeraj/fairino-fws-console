@@ -110,13 +110,20 @@ export class View3D {
     this.c.addEventListener('pointerdown', (e) => {
       this.c.setPointerCapture(e.pointerId);
       if (active.size === 0) this._retarget();
+      this._interacting = true;         // LOD: skeleton while the hand is on
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
         const [a, b] = [...active.values()];
         pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
       }
     });
-    const end = (e) => { active.delete(e.pointerId); };
+    const end = (e) => {
+      active.delete(e.pointerId);
+      if (active.size === 0) {
+        this._interacting = false;
+        this.requestDraw();             // restore the full mesh at rest
+      }
+    };
     this.c.addEventListener('pointerup', end);
     this.c.addEventListener('pointercancel', end);
 
@@ -142,6 +149,9 @@ export class View3D {
     this.c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.dist = Math.max(700, Math.min(5000, this.dist * (1 + Math.sign(e.deltaY) * 0.12)));
+      this._interactUntil = performance.now() + 220;
+      clearTimeout(this._lodTimer);
+      this._lodTimer = setTimeout(() => this.requestDraw(), 260);
       this._schedule();
     }, { passive: false });
   }
@@ -365,7 +375,13 @@ export class View3D {
         ph += p[0] * (i * 3 + 1) + p[1] * (i * 3 + 2) + p[2] * (i * 3 + 3);
       }
     }
-    const sig = `${this.yaw},${this.pitch},${this.dist},${this.tx},${this.ty},${this.zc},${this.panX},${this.panY},${this.w},`
+    // Interaction LOD: while orbiting or zooming, the arm draws as its
+    // skeleton — seven strokes instead of thousands of shaded triangles —
+    // so the drag stays glued to the pointer on any hardware. The mesh
+    // returns the moment the hand comes off.
+    const lod = this._interacting
+      || performance.now() < (this._interactUntil || 0);
+    const sig = `${this.yaw},${this.pitch},${this.dist},${this.tx},${this.ty},${this.zc},${this.panX},${this.panY},${lod},${this.w},`
       + `${this.h},${!this.points},${ph},${this.trail.length},`
       + `${this._gen || 0},${this._isDark()}`;
     if (sig === this._sig) return;
@@ -402,7 +418,7 @@ export class View3D {
       g.globalAlpha = 1;
     }
 
-    if (this.meshes && this.frames) {
+    if (this.meshes && this.frames && !lod) {
       this._drawMeshes(g);
     } else {
       this._drawSkeleton(g, line2, dim, text, accent, data);
