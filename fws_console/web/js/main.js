@@ -240,12 +240,20 @@ enableSwitch.onclick = () => {
 };
 
 function reflectEnable() {
+  // The gateway reports no arm-power field on any endpoint, so until the
+  // operator commands enable/disable the state is genuinely UNKNOWN. Render
+  // that as a distinct third position (not a confident "off"), so nobody
+  // toggles a switch believing it reflects the arm.
   enableSwitch.setAttribute('aria-checked', String(enabledState === true));
+  enableSwitch.classList.toggle('unknown', enabledState === null);
+  enableSwitch.title = enabledState === null
+    ? 'The gateway does not report arm power; take control and toggle to set it.'
+    : '';
   $('enable-label').textContent =
     enabledState === null ? 'Unknown' : enabledState ? 'Enabled' : 'Disabled';
   setStatus('sc-enable',
-    enabledState ? 'ok' : '',
-    enabledState === null ? '—' : enabledState ? 'on' : 'off');
+    enabledState ? 'ok' : enabledState === null ? 'warn' : '',
+    enabledState === null ? '?' : enabledState ? 'on' : 'off');
 }
 
 $('btn-reset').onclick = () => run('reset faults', () => api.resetErrors());
@@ -458,7 +466,9 @@ stream.onFrame = (f) => {
   frames++;
   pendingFrame = f;
   if (f.limits) lastLimits = f.limits;
-  renderFault(f);                          // safety surface: always current
+  try { renderFault(f); } catch (e) { /* never let a bad frame break the loop */
+    if (!stream._faultWarned) { stream._faultWarned = true; log(`fault render: ${e.message}`, 'err'); }
+  }
   if (f.joints && candidates) lockModel(f);
   if (f.joint_torque) {
     for (let i = 0; i < sparks.length && i < f.joint_torque.length; i++) {
@@ -475,6 +485,23 @@ function renderTick() {
   renderQueued = false;
   const f = pendingFrame;
   if (!f) return;
+  try {
+    renderTickInner(f);
+  } catch (e) {
+    // A malformed frame must not freeze the display under a "live" badge —
+    // that is the one failure this console exists to prevent. Degrade the
+    // stream indicator and say so, once.
+    if (!renderTick._broke) {
+      renderTick._broke = true;
+      log(`render error: ${e.message}`, 'err');
+      setStatus('sc-stream', 'bad', 'render error');
+      const scrim = $('stage-scrim');
+      if (scrim) { scrim.hidden = false; scrim.textContent = 'RENDER ERROR — values may be stale'; }
+    }
+  }
+}
+
+function renderTickInner(f) {
 
   const now = performance.now();
   if (now - rateAt > 1000) {

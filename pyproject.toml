@@ -9,7 +9,7 @@ description = "Operator console for FWS, the Fairino robot gateway"
 authors = [{ name = "Meraj Safari" }]
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 keywords = ["fairino", "robot", "cobot", "robotics", "console", "ui", "fws"]
 classifiers = [
@@ -52,6 +52,23 @@ fws-console = "fws_console.cli:main"
 # Hatchling packages everything under fws_console/, the web/ assets included.
 [tool.hatch.build.targets.wheel]
 packages = ["fws_console"]
+
+# Explicit sdist contents: without this hatchling includes the whole working
+# tree, which once swept a Firefox test profile (credentials and all) into
+# the tarball. Only these paths ship.
+[tool.hatch.build.targets.sdist]
+include = [
+  "fws_console",
+  "tests",
+  "README.md",
+  "CHANGELOG.md",
+  "CONTRIBUTING.md",
+  "SECURITY.md",
+  "LICENSE",
+  "NOTICE",
+  "fws-live.toml.example",
+  "pyproject.toml",
+]
 
 [tool.ruff]
 line-length = 88

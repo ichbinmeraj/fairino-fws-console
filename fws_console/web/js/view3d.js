@@ -73,28 +73,45 @@ export class View3D {
     // then never rasterises a triangle, so jog buttons, charts and DOM
     // updates stop competing with the stage. Same painter code either way.
     this.worker = null;
-    if ('transferControlToOffscreen' in canvas && typeof Worker === 'function') {
+    // Only take the worker path when we can transfer ALL THREE layers, and
+    // only transfer once every element is confirmed — a transfer that
+    // succeeds on the main canvas and then throws on a sibling would leave
+    // the main canvas both un-contextable and un-drawable, bricking the
+    // stage. Checking first keeps the 2D fallback intact on any failure.
+    const backEl = document.getElementById('view-back');
+    const glEl = document.getElementById('view-gl');
+    let transferred = false;
+    if ('transferControlToOffscreen' in canvas && typeof Worker === 'function'
+        && backEl && glEl) {
       try {
-        const backEl = document.getElementById('view-back');
-        const glEl = document.getElementById('view-gl');
         this.worker = new Worker('js/stage-worker.js', { type: 'module' });
-        if (backEl && glEl) {
-          const offMain = canvas.transferControlToOffscreen();
-          const offBack = backEl.transferControlToOffscreen();
-          const offGl = glEl.transferControlToOffscreen();
-          this.worker.postMessage(
-            { type: 'layers', mainCanvas: offMain, backCanvas: offBack, glCanvas: offGl },
-            [offMain, offBack, offGl]);
-        } else {
-          const off = canvas.transferControlToOffscreen();
-          this.worker.postMessage({ type: 'canvas', canvas: off }, [off]);
-        }
-      } catch { this.worker = null; }
+        // A worker that fails to load, or throws, must not leave a silently
+        // blank stage — surface it and drop the layer from view.
+        this.worker.onerror = (e) => {
+          const ov = document.getElementById('stage-scrim');
+          if (ov) {
+            ov.hidden = false;
+            ov.textContent = '3D view unavailable (worker error)';
+          }
+          try { this.worker.terminate(); } catch { /* already gone */ }
+        };
+        const offMain = canvas.transferControlToOffscreen();
+        transferred = true;
+        const offBack = backEl.transferControlToOffscreen();
+        const offGl = glEl.transferControlToOffscreen();
+        this.worker.postMessage(
+          { type: 'layers', mainCanvas: offMain, backCanvas: offBack, glCanvas: offGl },
+          [offMain, offBack, offGl]);
+      } catch {
+        try { this.worker.terminate(); } catch { /* ignore */ }
+        this.worker = null;
+      }
     }
     // getContext must come AFTER the transfer attempt: a canvas with a 2D
-    // context can no longer be transferred, and a transferred canvas can no
-    // longer give the page a context.
-    this.ctx = this.worker ? null : canvas.getContext('2d');
+    // context can no longer be transferred. If a transfer half-completed the
+    // main canvas is dead either way; leave ctx null and the worker.onerror /
+    // scrim covers it.
+    this.ctx = (this.worker || transferred) ? null : canvas.getContext('2d');
 
     this._bindOrbit();
     this._resize();

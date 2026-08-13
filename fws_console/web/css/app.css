@@ -571,6 +571,10 @@ body[data-stream]:not([data-stream="live"]) #tbl-tcp {
 .switch[aria-checked="true"] { background: var(--ok); border-color: var(--ok); }
 .switch[aria-checked="true"]::after { transform: translateX(18px); background: #fff; }
 .switch:disabled { opacity: 0.38; cursor: not-allowed; }
+/* Unknown arm power: neither on nor off — a dashed, mid-travelled knob so
+   it never reads as a confident state the gateway did not actually report. */
+.switch.unknown { background: var(--warn-bg); border-style: dashed; border-color: var(--warn); }
+.switch.unknown::after { transform: translateX(9px); background: var(--warn); }
 
 /* ---------------------------------------------------------------- charts */
 
@@ -778,7 +782,10 @@ select {
 }
 .dlg #dlg-input-wrap { display: block; margin-top: 12px; }
 .dlg #dlg-input { width: 100%; }
-.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.dlg-actions {
+  display: flex; flex-direction: row-reverse; justify-content: flex-start;
+  gap: 8px; margin-top: 16px;
+}
 .dlg-actions button:empty { display: none; }
 
 .shortcuts { font-size: var(--fs-md); }

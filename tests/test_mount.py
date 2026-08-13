@@ -221,3 +221,23 @@ class TestInterfaceQuality:
         assert ".stage-overlay .seg button { pointer-events: auto; }" not in css
         # the top bar wraps so wide toolbars stay inside the stage
         assert "flex-wrap: wrap" in css.split(".stage-top")[1].split("}")[0]
+
+    def test_dialog_module_guards_reuse_and_escape(self):
+        """The shared <dialog> is reused for every confirmation. Two bugs
+        that could shut the controller down came from that: a stale
+        returnValue making Escape read as 'ok', and re-opening an open dialog
+        (InvalidStateError → unhandled rejection). Both are guarded in ui.js."""
+        ui = (WEB / "js" / "ui.js").read_text()
+        assert "d.returnValue = ''" in ui, "returnValue is not reset per dialog"
+        assert "if (d.open) d.close('cancel')" in ui, "no re-entrancy guard"
+        # OK before Cancel in DOM so implicit submit (Enter) confirms
+        ok = ui.index('id="dlg-ok"')
+        cancel = ui.index('id="dlg-cancel"')
+        assert ok < cancel, "OK must precede Cancel so Enter confirms, not cancels"
+
+    def test_palette_escapes_server_strings(self):
+        """The palette lists command names and OpenAPI paths — server data —
+        in innerHTML. Every other renderer escapes; this one must too."""
+        ui = (WEB / "js" / "ui.js").read_text()
+        assert "export const esc" in ui, "ui.js has no escape helper"
+        assert "esc(r.it.label)" in ui and "esc(r.it.group)" in ui

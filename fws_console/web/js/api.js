@@ -77,7 +77,7 @@ export class Api {
     const timer = setTimeout(() => ctl.abort(new Error('timeout')), timeout);
     if (signal) signal.addEventListener('abort', () => ctl.abort(), { once: true });
 
-    let res;
+    let res, text;
     try {
       res = await fetch(this.base + path, {
         method,
@@ -85,15 +85,18 @@ export class Api {
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: ctl.signal,
       });
+      if (res.status === 204) return null;
+      // The body read is inside the try on purpose: a connection reset
+      // mid-body throws here too, and it must surface as an ApiError with a
+      // status-shaped body, not a raw TypeError that every `e.status` and
+      // `e.isLocked` check downstream would mishandle.
+      text = await res.text();
     } catch (e) {
       throw new ApiError(0, { detail: `cannot reach gateway: ${e.message}` }, path);
     } finally {
       clearTimeout(timer);
     }
 
-    if (res.status === 204) return null;
-
-    const text = await res.text();
     let parsed = null;
     if (text) {
       try { parsed = JSON.parse(text); } catch { parsed = { detail: text }; }

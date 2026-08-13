@@ -915,9 +915,9 @@ async function config(root, apiClient, log, toast) {
     if (!n) return;
     if (!(await dialog({
       title: 'Switch the active point table?',
-      body: `<p>Programs resolve taught point names against the active table. '
-          + 'Switching changes where every <code>PTP</code> and <code>Lin</code> '
-          + 'in a running program will go.</p><p class="dlg-quote">${esc(n)}</p>`,
+      body: `<p>Programs resolve taught point names against the active table. `
+          + `Switching changes where every <code>PTP</code> and <code>Lin</code> `
+          + `in a running program will go.</p><p class="dlg-quote">${esc(n)}</p>`,
       confirmLabel: 'Switch', danger: true,
     }))) return;
     try {

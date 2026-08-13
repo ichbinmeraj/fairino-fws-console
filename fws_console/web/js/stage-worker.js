@@ -405,7 +405,16 @@ function schedule() {
 /* ---------------------------------------------------------------- inbox */
 
 self.onmessage = (e) => {
-  const m = e.data;
+  try {
+    handleMessage(e.data);
+  } catch (err) {
+    // A malformed message must not kill the worker silently; report it so
+    // the page's worker.onerror surfaces a scrim rather than a blank stage.
+    self.postMessage({ type: 'error', message: String(err && err.message || err) });
+  }
+};
+
+function handleMessage(m) {
   switch (m.type) {
     case 'canvas':
       ctx = m.canvas.getContext('2d');
@@ -472,6 +481,7 @@ self.onmessage = (e) => {
       break;
     }
     case 'pose': {
+      if (!Array.isArray(m.points) || !m.points.length) break;
       points = m.points;
       frames = m.frames;
       model = m.model;

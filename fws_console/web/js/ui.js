@@ -12,6 +12,11 @@
 
 const $ = (id) => document.getElementById(id);
 
+/** HTML-escape. ui.js builds innerHTML from server strings (command names,
+ * OpenAPI paths) just like the panels do, so it needs the same guard. */
+export const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
 /* ---------------------------------------------------------------- dialog */
 
 let dlg = null;
@@ -20,6 +25,10 @@ function ensureDialog() {
   if (dlg) return dlg;
   dlg = document.createElement('dialog');
   dlg.className = 'dlg';
+  // #dlg-ok is FIRST so implicit form submission (Enter) confirms rather
+  // than cancels; the visual order is reversed in CSS. Both buttons are
+  // type=submit inside method="dialog", so each sets returnValue to its
+  // own value.
   dlg.innerHTML = `
     <form method="dialog">
       <h3 id="dlg-title"></h3>
@@ -28,8 +37,8 @@ function ensureDialog() {
         <input id="dlg-input" autocomplete="off" spellcheck="false">
       </label>
       <div class="dlg-actions">
-        <button value="cancel" class="btn" id="dlg-cancel">Cancel</button>
         <button value="ok" class="btn btn-primary" id="dlg-ok">OK</button>
+        <button value="cancel" class="btn" id="dlg-cancel">Cancel</button>
       </div>
     </form>`;
   document.body.append(dlg);
@@ -47,6 +56,16 @@ export function dialog({
   danger = false, input = null,
 } = {}) {
   const d = ensureDialog();
+  // If a dialog is already open (e.g. the `?` sheet fired while a confirm
+  // was up), settle its promise as a cancel FIRST. Without this, reusing the
+  // shared element re-opens it (InvalidStateError in the executor → unhandled
+  // rejection) and stacks a second close listener whose stale returnValue
+  // could confirm a destructive action.
+  if (d.open) d.close('cancel');
+  // Reset the shared element's returnValue: closing via Escape leaves it at
+  // whatever the PREVIOUS dialog set, so an Escape-to-cancel could otherwise
+  // read as the last dialog's "ok" and fire a shutdown/reboot/run.
+  d.returnValue = '';
   $('dlg-title').textContent = title;
   $('dlg-body').innerHTML = body;
   const ok = $('dlg-ok');
@@ -79,8 +98,6 @@ export function dialog({
 /** Confirm shaped for the gateway's own refusal text. */
 export function confirmGateway(message, { title = 'Confirm', danger = true,
                                           confirmLabel = 'Send anyway' } = {}) {
-  const esc = (s) => String(s).replace(/[&<>]/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   return dialog({
     title,
     body: `<p class="dlg-quote">${esc(message)}</p>`,
@@ -187,9 +204,9 @@ function renderPalette() {
   list.innerHTML = ranked.map((r, n) => `
     <div class="pal-item${n === 0 ? ' sel' : ''}" role="option"
          aria-selected="${n === 0}" data-i="${r.i}">
-      <span class="pal-group">${r.it.group}</span>
-      <span class="pal-label">${r.it.label}</span>
-      ${r.it.hint ? `<span class="pal-hint">${r.it.hint}</span>` : ''}
+      <span class="pal-group">${esc(r.it.group)}</span>
+      <span class="pal-label">${esc(r.it.label)}</span>
+      ${r.it.hint ? `<span class="pal-hint">${esc(r.it.hint)}</span>` : ''}
     </div>`).join('')
     || '<div class="empty">nothing matches</div>';
 
@@ -201,20 +218,41 @@ function renderPalette() {
   }
 }
 
+let paletteGen = 0;
+
 export async function openPalette() {
   const el = buildPalette();
   el.hidden = false;
   const input = el.querySelector('#pal-input');
   input.value = '';
-  el.querySelector('#pal-list').innerHTML = skeleton(4);
+  items = [];                 // never rank last session's entries during a wait
   input.focus();
 
-  const gathered = await Promise.all(providers.map(async (p) => {
-    try { return await (typeof p === 'function' ? p() : p); }
-    catch { return []; }
-  }));
-  items = gathered.flat();
+  const gen = ++paletteGen;   // a re-open supersedes a slow in-flight gather
+  // Providers can be arrays (instant: panels, actions) or async (network:
+  // endpoints, commands). Render the instant ones NOW so Cmd-K is never
+  // blank while a fetch runs, then merge each async batch as it lands.
+  const instant = [];
+  const pending = [];
+  for (const p of providers) {
+    if (typeof p !== 'function') { instant.push(...p); continue; }
+    let out;
+    try { out = p(); } catch { continue; }
+    if (out && typeof out.then === 'function') pending.push(out);
+    else if (Array.isArray(out)) instant.push(...out);
+  }
+  items = instant;
   renderPalette();
+
+  for (const promise of pending) {
+    promise.then((batch) => {
+      if (gen !== paletteGen || el.hidden) return;   // superseded or closed
+      if (Array.isArray(batch) && batch.length) {
+        items = items.concat(batch);
+        renderPalette();
+      }
+    }).catch(() => { /* a provider failed; its rows simply do not appear */ });
+  }
 }
 
 export function closePalette() {
