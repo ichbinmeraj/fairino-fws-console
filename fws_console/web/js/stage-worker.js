@@ -566,17 +566,22 @@ vec3 ramp(float m, float t, float dark) {
 }
 
 void main() {
-  if (!gl_FrontFacing) { frag = vec4(uInterior, 1.0); return; }
+  // Two-sided shading, no gl_FrontFacing: the source STLs wind triangles
+  // inconsistently, so winding-based interior detection paints random
+  // outward faces near-black. Flipping the normal toward the camera works
+  // for every face; through openings the z-buffer shows the shell's far
+  // wall, slightly dimmed below, so cavities still read as depth.
   vec3 L = vec3(-0.42, 0.32, 0.85);
   vec3 n = normalize(vNrm);
   float ndv = dot(n, uEye);
+  float back = gl_FrontFacing ? 1.0 : 0.72;   // gentle, never black
   if (ndv < 0.0) { n = -n; ndv = -ndv; }
   float diff = max(0.0, dot(n, L));
   float ndh = max(0.0, dot(n, uHalfVec));
   float inten = 0.18 + 0.24 * (0.5 + 0.5 * n.z)
               + 0.72 * diff
               + 0.28 * pow(ndh, 6.0) * ndv;
-  float t = clamp(inten * 44.0 / 63.0, 0.0, 1.0);
+  float t = clamp(inten * back * 44.0 / 63.0, 0.0, 1.0);
   frag = vec4(ramp(uMat, t, uDark), 1.0);
 }`;
 
