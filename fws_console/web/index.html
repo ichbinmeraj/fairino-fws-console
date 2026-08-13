@@ -87,7 +87,13 @@
             <span class="stage-note" id="model-note"></span>
             <span class="spacer"></span>
             <div class="stage-tools">
-              <button class="btn" id="btn-view-fit" title="Fit view">
+              <span class="seg" id="seg-view" role="group" aria-label="Viewpoint">
+                <button data-view="iso" aria-pressed="true">ISO</button>
+                <button data-view="front" aria-pressed="false">FRONT</button>
+                <button data-view="side" aria-pressed="false">SIDE</button>
+                <button data-view="top" aria-pressed="false">TOP</button>
+              </span>
+              <button class="btn" id="btn-view-fit" title="Re-frame the arm">
                 <svg viewBox="0 0 17 17"><use href="#i-fit"/></svg></button>
               <button class="btn" id="btn-trail" title="Clear TCP trail">
                 <svg viewBox="0 0 17 17"><use href="#i-reset"/></svg></button>
@@ -100,7 +106,7 @@
               <div class="readout-row dim" id="ro-tcp-rot">—</div>
             </div>
             <span class="spacer"></span>
-            <span class="stage-note">drag to orbit · wheel to zoom</span>
+            <span class="stage-note">fixed views · wheel or pinch to zoom</span>
           </div>
         </div>
       </div>

@@ -103,37 +103,33 @@ export class View3D {
   }
 
   _bindOrbit() {
-    // Pointer-events orbit with two-pointer pinch zoom for touch.
+    // No free orbit: an instrument must not move under an accidental drag.
+    // The view changes only through the preset buttons and zoom (wheel or
+    // two-finger pinch).
     const active = new Map();
     let pinchDist = 0;
 
     this.c.addEventListener('pointerdown', (e) => {
       this.c.setPointerCapture(e.pointerId);
-      if (active.size === 0) this._retarget();
-      this._interacting = true;         // LOD: skeleton while the hand is on
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
         const [a, b] = [...active.values()];
         pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+        this._interacting = true;
       }
     });
     const end = (e) => {
       active.delete(e.pointerId);
-      if (active.size === 0) {
+      if (active.size < 2 && this._interacting) {
         this._interacting = false;
-        this.requestDraw();             // restore the full mesh at rest
+        this.requestDraw();
       }
     };
     this.c.addEventListener('pointerup', end);
     this.c.addEventListener('pointercancel', end);
 
     this.c.addEventListener('pointermove', (e) => {
-      const prev = active.get(e.pointerId);
-      if (!prev) return;
-      if (active.size === 1) {
-        this.yaw += (e.clientX - prev.x) * 0.01;
-        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch + (e.clientY - prev.y) * 0.01));
-      }
+      if (!active.has(e.pointerId)) return;
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
         const [a, b] = [...active.values()];
@@ -142,8 +138,8 @@ export class View3D {
           this.dist = Math.max(700, Math.min(5000, this.dist * pinchDist / d));
         }
         pinchDist = d;
+        this._schedule();
       }
-      this._schedule();
     });
 
     this.c.addEventListener('wheel', (e) => {
@@ -154,6 +150,19 @@ export class View3D {
       this._lodTimer = setTimeout(() => this.requestDraw(), 260);
       this._schedule();
     }, { passive: false });
+  }
+
+  /** Fixed viewpoints, cockpit-style: predictable, framed, nothing free. */
+  preset(name) {
+    const views = {
+      iso: [-35, 22], front: [90, 10], side: [0, 10], top: [-35, 78],
+    };
+    const [yawDeg, pitchDeg] = views[name] || views.iso;
+    this.fit();                         // frames arm+base, clears pan
+    this.yaw = yawDeg * RAD;
+    this.pitch = pitchDeg * RAD;
+    this._projSetup();
+    this.draw();
   }
 
   /** Move the orbit pivot to the arm's current centre without letting the
@@ -258,7 +267,6 @@ export class View3D {
         v, f,
         fn: smoothNormals(v, f),
         proj: new Float64Array(v.length),
-        shad: new Float32Array((v.length / 3) * 2),   // vertices dropped to z=0
       };
     });
     // Per-frame face buffers, sized once to the worst case (every face
@@ -463,8 +471,8 @@ export class View3D {
    * Backfaces are not culled — they are filled once, flat and dark, beneath
    * all front faces, so the decimated collision meshes read as solid
    * castings instead of hollow shells wherever they have openings. A contact
-   * shadow (the mesh flattened to z=0) grounds the arm. All buffers are
-   * preallocated in setMeshes; per-frame allocations are two Path2Ds.
+   * All buffers are preallocated in setMeshes; per-frame allocation is one
+   * Path2D.
    */
   _drawMeshes(g) {
     const dark = this._isDark();
@@ -492,7 +500,6 @@ export class View3D {
     hx /= hl; hy /= hl; hz /= hl;
 
     const fb = this._fb;
-    const shadow = new Path2D();
     const inner = new Path2D();
     let nF = 0;
 
@@ -504,7 +511,7 @@ export class View3D {
       const r00 = R[0][0], r01 = R[0][1], r02 = R[0][2], px = p[0];
       const r10 = R[1][0], r11 = R[1][1], r12 = R[1][2], py = p[1];
       const r20 = R[2][0], r21 = R[2][1], r22 = R[2][2], pz = p[2];
-      const v = mesh.v, s = mesh.proj, sh = mesh.shad, fn = mesh.fn;
+      const v = mesh.v, s = mesh.proj, fn = mesh.fn;
 
       for (let i = 0, j = 0; i < v.length; i += 3, j += 2) {
         const x = v[i], y = v[i + 1], z = v[i + 2];
@@ -519,11 +526,6 @@ export class View3D {
         s[i]     = hw + x1 * sc;
         s[i + 1] = hh - (y1 * sp + z1 * cp) * sc;
         s[i + 2] = y2;
-        // the same vertex dropped to the floor, for the contact shadow
-        const ys = y1 * cp + zc * sp;
-        const scs = foc / (dist + ys);
-        sh[j]     = hw + x1 * scs;
-        sh[j + 1] = hh - (y1 * sp - zc * cp) * scs;
       }
 
       const f = mesh.f;
@@ -575,16 +577,6 @@ export class View3D {
                     + 0.28 * Math.pow(ndh, 6) * ndv;
         const lut = base + Math.min(63, (inten * 44) | 0);
 
-        // Shadow triangles must all wind the same way or the nonzero fill
-        // rule punches holes where opposite windings overlap.
-        const a2 = f[i] * 2, b2 = f[i + 1] * 2, c2 = f[i + 2] * 2;
-        const sw = (sh[b2] - sh[a2]) * (sh[c2 + 1] - sh[a2 + 1])
-                 - (sh[b2 + 1] - sh[a2 + 1]) * (sh[c2] - sh[a2]);
-        shadow.moveTo(sh[a2], sh[a2 + 1]);
-        if (sw > 0) { shadow.lineTo(sh[b2], sh[b2 + 1]); shadow.lineTo(sh[c2], sh[c2 + 1]); }
-        else        { shadow.lineTo(sh[c2], sh[c2 + 1]); shadow.lineTo(sh[b2], sh[b2 + 1]); }
-        shadow.closePath();
-
         const k6 = nF * 6;
         fb.xy[k6] = ax; fb.xy[k6 + 1] = ay;
         fb.xy[k6 + 2] = bx; fb.xy[k6 + 3] = by;
@@ -595,11 +587,8 @@ export class View3D {
       }
     }
 
-    // Contact shadow first, then the interior in one fill beneath all front
-    // faces — through any opening in the meshes you see dark interior, so
-    // the arm reads as a solid casting.
-    g.fillStyle = dark ? 'rgba(0,0,0,0.40)' : 'rgba(15,23,42,0.10)';
-    g.fill(shadow);
+    // Interior in one fill beneath all front faces — through any opening in
+    // the meshes you see dark interior, so the arm reads as a solid casting.
     g.fillStyle = colors[128];
     g.fill(inner);
 

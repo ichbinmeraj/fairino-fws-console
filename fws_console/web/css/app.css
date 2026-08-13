@@ -467,7 +467,12 @@ tbody tr:last-child td { border-bottom: none; }
   text-overflow: ellipsis; align-self: center;
 }
 
-.stage-tools { display: flex; gap: 4px; }
+.stage-tools { display: flex; gap: 6px; align-items: center; }
+.stage-tools .seg {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(6px);
+}
+.stage-tools .seg button { padding: 4px 9px; font-size: 10.5px; letter-spacing: 0.05em; }
 #stage-scrim {
   position: absolute; inset: 0; z-index: 5;
   display: flex; align-items: center; justify-content: center;
