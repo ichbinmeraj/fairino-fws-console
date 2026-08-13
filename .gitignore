@@ -11,3 +11,5 @@ dist/
 fws-live.toml
 api-keys
 *.toml.local
+ff-profile/
+chrome-profile/
