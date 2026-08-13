@@ -68,12 +68,9 @@ export class View3D {
     this.frames = null;   // per-link {R, p} world transforms, for meshes
     this.meshes = null;   // per-link {v: Float64Array, f: Uint16Array}
     this.trail = [];
-    // Camera pivot + screen pan. The pivot never moves on its own (a pivot
-    // that follows the pose makes the scene bob while the arm jogs), but a
-    // drag RE-TARGETS it to the arm's current centre at the moment of grab,
-    // with pan/dist compensated so the image does not jump — so orbiting
-    // always turns around the arm wherever it has wandered since the last
-    // fit. fit() clears the pan.
+    // Camera pivot: permanently the robot's base axis (turntable). Only
+    // fit() adjusts the vertical centre and distance; nothing moves the
+    // camera on its own, and a drag turns the whole rigid scene together.
     this.tx = 0; this.ty = 0; this.zc = 0;
     this.panX = 0; this.panY = 0;
 
@@ -103,15 +100,15 @@ export class View3D {
   }
 
   _bindOrbit() {
-    // Drag orbits (re-targeted to the arm at grab time, skeleton LOD while
-    // the hand is on); two pointers pinch-zoom; the preset buttons snap to
-    // fixed framed views.
+    // Drag turns the turntable; two pointers pinch-zoom; the preset buttons
+    // snap to fixed framed views. The arm NEVER changes representation
+    // during interaction — a mesh that morphs to a skeleton under the hand
+    // reads as the arm itself moving.
     const active = new Map();
     let pinchDist = 0;
 
     this.c.addEventListener('pointerdown', (e) => {
       this.c.setPointerCapture(e.pointerId);
-      this._interacting = true;
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
         const [a, b] = [...active.values()];
@@ -119,13 +116,7 @@ export class View3D {
       }
       if (this.onGrab) this.onGrab();
     });
-    const end = (e) => {
-      active.delete(e.pointerId);
-      if (active.size === 0 && this._interacting) {
-        this._interacting = false;
-        this.requestDraw();
-      }
-    };
+    const end = (e) => { active.delete(e.pointerId); };
     this.c.addEventListener('pointerup', end);
     this.c.addEventListener('pointercancel', end);
 
@@ -151,9 +142,6 @@ export class View3D {
     this.c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.dist = Math.max(700, Math.min(5000, this.dist * (1 + Math.sign(e.deltaY) * 0.12)));
-      this._interactUntil = performance.now() + 220;
-      clearTimeout(this._lodTimer);
-      this._lodTimer = setTimeout(() => this.requestDraw(), 260);
       this._schedule();
     }, { passive: false });
   }
@@ -368,13 +356,7 @@ export class View3D {
         ph += p[0] * (i * 3 + 1) + p[1] * (i * 3 + 2) + p[2] * (i * 3 + 3);
       }
     }
-    // Interaction LOD: while orbiting or zooming, the arm draws as its
-    // skeleton — seven strokes instead of thousands of shaded triangles —
-    // so the drag stays glued to the pointer on any hardware. The mesh
-    // returns the moment the hand comes off.
-    const lod = this._interacting
-      || performance.now() < (this._interactUntil || 0);
-    const sig = `${this.yaw},${this.pitch},${this.dist},${this.tx},${this.ty},${this.zc},${this.panX},${this.panY},${lod},${this.w},`
+    const sig = `${this.yaw},${this.pitch},${this.dist},${this.tx},${this.ty},${this.zc},${this.panX},${this.panY},${this.w},`
       + `${this.h},${!this.points},${ph},${this.trail.length},`
       + `${this._gen || 0},${this._isDark()}`;
     if (sig === this._sig) return;
@@ -411,7 +393,7 @@ export class View3D {
       g.globalAlpha = 1;
     }
 
-    if (this.meshes && this.frames && !lod) {
+    if (this.meshes && this.frames) {
       this._drawMeshes(g);
     } else {
       this._drawSkeleton(g, line2, dim, text, accent, data);
