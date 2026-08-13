@@ -6,6 +6,7 @@ import { View3D } from './view3d.js';
 import { MODELS, agreement, modelFor, verdict } from './kin.js';
 import { PANELS } from './panels.js';
 import { DEV_PANELS } from './devpanels.js';
+import { WB_PANELS } from './workbench.js';
 import { invalidateChartTheme, SharedScale, Spark } from './charts.js';
 import {
   closePalette, dialog, openPalette, paletteOpen, registerPalette,
@@ -466,6 +467,10 @@ stream.onFrame = (f) => {
   frames++;
   pendingFrame = f;
   if (f.limits) lastLimits = f.limits;
+  // Panels outside this module (the Develop workbench) subscribe to frames
+  // through this event rather than the render pipeline; a hidden panel
+  // returns immediately, so the cost is one dispatch per frame.
+  document.dispatchEvent(new CustomEvent('fws-frame', { detail: f }));
   try { renderFault(f); } catch (e) { /* never let a bad frame break the loop */
     if (!stream._faultWarned) { stream._faultWarned = true; log(`fault render: ${e.message}`, 'err'); }
   }
@@ -692,7 +697,8 @@ const TABS = [
   ['programs', 'Programs', 'i-program'],
   ['io', 'I/O', 'i-io'],
   ['force', 'Force', 'i-force'],
-  ['config', 'Config', 'i-config', 'dev'],
+  ['develop', 'Develop', 'i-develop', 'dev'],
+  ['config', 'Config', 'i-config'],
   ['commands', 'Commands', 'i-cmd'],
   ['lua', 'Lua', 'i-lua'],
   ['api', 'API', 'i-api'],
@@ -702,7 +708,7 @@ const TABS = [
   ['audit', 'Audit', 'i-audit'],
 ];
 
-const ALL_PANELS = { ...PANELS, ...DEV_PANELS };
+const ALL_PANELS = { ...PANELS, ...DEV_PANELS, ...WB_PANELS };
 
 const loaded = new Set(['operate']);
 let currentTab = null;

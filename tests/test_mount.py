@@ -102,8 +102,25 @@ class TestDeveloperPanels:
         assert (js / "devpanels.js").is_file()
         main = (js / "main.js").read_text()
         assert "devpanels.js" in main, "main.js does not import the dev panels"
-        for tab in ("config", "commands", "lua", "api", "files", "system"):
+        for tab in ("develop", "config", "commands", "lua", "api", "files",
+                    "system"):
             assert f"'{tab}'" in main, f"tab {tab} is not registered"
+
+    def test_the_workbench_ships_and_its_editor_escapes(self):
+        """The Develop workbench is the edit→compile→run→watch loop in one
+        view. Its highlighter feeds innerHTML from program source that came
+        off the controller, so every token path must escape."""
+        js = WEB / "js"
+        wb = (js / "workbench.js").read_text()
+        assert "workbench.js" in (js / "main.js").read_text()
+        assert (WEB / "index.html").read_text().count('data-tab="develop"')
+        # every branch of the tokenizer wraps its slice in esc()
+        import re
+        for m in re.finditer(r"out \+= [^;]+;", wb):
+            assert "esc(" in m.group(0), f"unescaped highlighter output: {m.group(0)}"
+        # saving goes through the real upload path, run keeps the confirm flow
+        assert "/api/v1/programs/" in wb
+        assert "confirmGateway" in wb
 
     def test_the_api_explorer_is_generated_from_the_spec(self):
         """Not a hand-listed set of endpoints: it reads /openapi.json, so a

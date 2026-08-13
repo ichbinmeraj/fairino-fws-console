@@ -48,6 +48,16 @@ itself at `/console`.
 
 ### Added
 
+- **Develop — a workbench for writing and testing programs.** The
+  edit → compile → load → run → watch loop lived across four tabs and the
+  console could not edit at all; now one view holds the controller's program
+  directory, a hand-rolled Lua editor (highlight overlay, line numbers,
+  Tab-inserts-spaces, Ctrl+S), Save that uploads to the controller with md5
+  verification, Check that compiles on the controller, Load/Run/Stop with
+  the gateway's confirm flow, and a live strip — joints, TCP, |F|, fault,
+  execution state — beside the code. No editor dependency ships: the
+  highlighter is a single escaped-token pass, in keeping with the no-CDN
+  air-gap rule.
 - **Programs — browse and download what is already on the controller.** The
   panel now defaults to the controller's real `.lua` directory (read over FTP;
   the controller's own listing RPC is quarantined because it can wedge the

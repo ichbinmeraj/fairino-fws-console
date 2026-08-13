@@ -903,6 +903,86 @@ kbd {
 .cap-table td:nth-child(2) { overflow-wrap: anywhere; }
 .cap-table td:last-child { width: 76px; text-align: right; white-space: nowrap; padding-right: 0; }
 
+/* ------------------------------------------------------------- workbench */
+
+.wb {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 220px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 14px;
+  height: calc(100vh - 120px);
+  min-height: 420px;
+}
+.wb-files { grid-row: 1; display: flex; flex-direction: column; min-height: 0; }
+.wb-editor { grid-row: 1; display: flex; flex-direction: column; min-height: 0; }
+.wb-live { grid-row: 1; overflow-y: auto; }
+.wb-out { grid-column: 1 / -1; grid-row: 2; }
+
+.wb-list { flex: 1; overflow-y: auto; min-height: 0; }
+.wb-list [role="option"] {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px; padding: 5px 8px; border-radius: var(--r-s); cursor: pointer;
+}
+/* One row per file, whatever the name length: the name ellipsizes, the
+   byte count never wraps away from it. */
+.wb-list [role="option"] > .mono {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wb-list [role="option"] > .small { flex: none; white-space: nowrap; }
+.wb-list [role="option"]:hover { background: var(--hover); }
+.wb-list [role="option"][aria-selected="true"] {
+  background: var(--accent-bg); color: var(--accent);
+}
+
+.wb-dirty { color: var(--warn); font-size: var(--fs-lg); line-height: 1; }
+
+/* The editor overlay. The textarea supplies editing, caret and selection;
+   the <pre> behind it supplies colour. They MUST share identical metrics —
+   same font, size, line-height, padding, border — or the caret drifts off
+   the text it edits. Both scroll; a listener keeps them in step. */
+.wb-edwrap {
+  flex: 1; display: flex; min-height: 0;
+  border: 1px solid var(--line); border-radius: var(--r-s);
+  background: var(--raised); overflow: hidden;
+}
+.wb-gutter {
+  padding: 8px 6px 8px 10px; text-align: right; user-select: none;
+  overflow: hidden; flex: none; color: var(--faint);
+  font: 500 var(--fs-sm)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-right: 1px solid var(--line);
+}
+.wb-edstack { position: relative; flex: 1; min-width: 0; }
+.wb-hl, .wb-ta {
+  position: absolute; inset: 0; margin: 0; padding: 8px 10px;
+  font: 500 var(--fs-sm)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre; overflow: auto; tab-size: 2; border: 0;
+}
+.wb-hl { pointer-events: none; overflow: hidden; }
+.wb-hl code { font: inherit; }
+.wb-ta {
+  resize: none; outline: none; background: transparent;
+  color: transparent; caret-color: var(--text);
+}
+.wb-ta::selection { background: var(--accent-bg); color: transparent; }
+
+.hl-k { color: var(--accent); font-style: normal; }
+.hl-s { color: var(--ok); font-style: normal; }
+.hl-n { color: var(--warn); font-style: normal; }
+.hl-c { color: var(--faint); font-style: italic; }
+.hl-f { color: var(--danger); font-style: normal; }
+
+.wb-joints td { padding: 1px 4px; }
+.wb-joints .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.wb-outlog { max-height: 110px; overflow-y: auto; }
+.wb-outlog .ok { color: var(--ok); }
+.wb-outlog .err { color: var(--danger); }
+
+@media (max-width: 1150px) {
+  .wb { display: flex; flex-direction: column; height: auto; }
+  .wb-edwrap { min-height: 300px; }
+}
+
 /* ---------------------------------------------------------------- narrow */
 
 @media (max-width: 1150px) {

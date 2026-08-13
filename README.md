@@ -66,6 +66,7 @@ all of them.
 
 | Panel | What it gives you |
 |---|---|
+| **Develop** | the whole edit → compile → run → watch loop in one view: the controller's program directory, a Lua editor (syntax highlighting, line numbers, Ctrl+S saves to the controller with md5 verification), compile-check, load, run/stop with the gateway's confirm flow, and a live strip — joints, TCP, force, fault — beside the code |
 | **Config** | robot state, velocity, flange pose, tool and work frames, active frames, joint torques, gripper, payload, global speed, motion queue, IK pre-flight, point tables |
 | **Commands** | the 594-command wire registry — filter by danger class and kind, read each command's wire arguments, arity, evidence basis and hazards, and invoke it with the policy matrix beside you |
 | **Lua** | the 282-function controller catalogue, manual sections, the RPC↔Lua bridge, the argument-order conflicts, what this firmware is missing, and a box that compiles a snippet on the controller itself |
