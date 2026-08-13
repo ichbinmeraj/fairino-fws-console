@@ -23,6 +23,11 @@ lua_validate_enabled = true   # compile-check Lua without uploading (port 8060)
 # so the 8 s default reports "unreachable". Raise the FTP timeouts past it.
 connect_timeout_s = 45.0
 command_timeout_s = 60.0
+# The status page's liveness probes keep their own short timeout (default 5 s),
+# so raising the FTP timeouts above does NOT make GET /controller/services hang
+# for 45 s. Only lower this if a healthy service on this network is somehow
+# slower than 5 s to accept a connection.
+# liveness_timeout_s = 5.0
 
 # shell (telnet, 23) and qconn (8000) are ROOT-EQUIVALENT on this hardware,
 # so FWS refuses to serve them without an API key file. To enable them:

@@ -273,34 +273,48 @@ async function io(root, api, log, toast) {
         </div>`)}
     </div>`;
 
+  // A whole read family can be unavailable for two different reasons, and the
+  // panel must not paint N identical red "?" tags — a wall of red reads as a
+  // hardware fault. The two cases:
+  //   1. the firmware genuinely lacks it (capabilities says 'absent'), or
+  //   2. the controller returns the same error for every channel right now —
+  //      e.g. GetDI answers "error 14" for all of them while the controller is
+  //      faulted, even though the reads work once the fault clears.
+  // Both collapse to ONE line stating the reason, not eight red tags.
+  let ioCaps = {};
+  try { ioCaps = (await api.capabilities())?.groups?.io || {}; } catch { /* probe anyway */ }
+  const absent = (f) => (ioCaps[f] && ioCaps[f].state === 'absent') ? ioCaps[f] : null;
+  const oneLine = (msg) => `<span class="small faint">${esc(msg)}</span>`;
+
+  // Read `count` channels together; render one tag each, but if EVERY channel
+  // fails the same way, show a single reason instead of a row of red tags.
+  const readFamily = async (el, feat, label, count, path) => {
+    const gone = absent(feat);
+    if (gone) {
+      el.innerHTML = oneLine(`not on this firmware — ${gone.method}: ${gone.detail || 'absent'}`);
+      return;
+    }
+    el.innerHTML = '<span class="small dim">reading…</span>';
+    const res = await Promise.all(Array.from({ length: count }, (_, i) =>
+      api.get(path(i)).then(
+        (r) => ({ i, ok: true, v: r.value }),
+        (e) => ({ i, ok: false, msg: e.message }))));
+    if (res.every((r) => !r.ok)) {
+      el.innerHTML = oneLine(`unavailable — ${res[0].msg}`);
+      return;
+    }
+    el.innerHTML = res.map((r) => r.ok
+      ? `<span class="tag ${r.v ? 'ok' : ''}">${label}${r.i} ${r.v}</span>`
+      : `<span class="tag bad">${label}${r.i} ?</span>`).join(' ');
+  };
+
   const di = root.querySelector('#di');
-  const readInputs = async () => {
-    di.innerHTML = '';
-    for (let i = 0; i < N; i++) {
-      const el = document.createElement('span');
-      el.className = 'tag';
-      el.textContent = `DI${i} …`;
-      di.append(el);
-      api.get(`/api/v1/io/digital/inputs/${i}`).then(
-        (r) => { el.textContent = `DI${i} ${r.value}`; el.className = `tag ${r.value ? 'ok' : ''}`; },
-        () => { el.textContent = `DI${i} ?`; el.className = 'tag bad'; },
-      );
-    }
-  };
   const tdi = root.querySelector('#tdi');
-  const readTool = () => {
-    tdi.innerHTML = '';
-    for (let i = 0; i < 4; i++) {
-      const el = document.createElement('span');
-      el.className = 'tag';
-      el.textContent = `TDI${i} …`;
-      tdi.append(el);
-      api.get(`/api/v1/io/tool/digital/inputs/${i}`).then(
-        (r) => { el.textContent = `TDI${i} ${r.value}`; el.className = `tag ${r.value ? 'ok' : ''}`; },
-        () => { el.textContent = `TDI${i} ?`; el.className = 'tag bad'; },
-      );
-    }
-  };
+  const readInputs = () => readFamily(di, 'digital_in', 'DI', N,
+    (i) => `/api/v1/io/digital/inputs/${i}`);
+  const readTool = () => readFamily(tdi, 'tool_digital_in', 'TDI', 4,
+    (i) => `/api/v1/io/tool/digital/inputs/${i}`);
+
   root.querySelector('#di-refresh').onclick = () => { readInputs(); readTool(); };
   readInputs();
   readTool();
@@ -331,11 +345,18 @@ async function io(root, api, log, toast) {
   }
 
   root.querySelector('#ai-read').onclick = async () => {
+    const val = root.querySelector('#ai-val');
+    const gone = absent('analog_in');
+    if (gone) {
+      val.textContent = 'n/a';
+      log(`analog in (${gone.method}): not on this firmware`, 'warn');
+      return;
+    }
     const i = root.querySelector('#ai-idx').value;
     try {
       const r = await api.get(`/api/v1/io/analog/inputs/${i}`);
-      root.querySelector('#ai-val').textContent = r.value ?? JSON.stringify(r);
-    } catch (e) { log(`AI${i}: ${e.message}`, 'err'); }
+      val.textContent = r.value ?? JSON.stringify(r);
+    } catch (e) { val.textContent = 'n/a'; log(`AI${i}: ${e.message}`, 'err'); }
   };
   root.querySelector('#ao-write').onclick = () => {
     const i = root.querySelector('#ao-idx').value;
@@ -361,7 +382,7 @@ async function force(root, api, log, toast) {
         <div class="small faint" style="margin-top:10px">
           Zeroing takes the current load as the new reference. Do it with the
           tool unloaded, or the reading will lie by exactly that much.</div>`)}
-      ${card('Payload', `<dl class="kv" id="f-pay"></dl>`)}
+      ${card('Payload', `<div id="f-pay"></div>`)}
       <div class="card" style="grid-column:1/-1">
         <h2>Force strategies
           <span class="spacer"></span>
@@ -393,9 +414,26 @@ async function force(root, api, log, toast) {
 
   try {
     const p = await api.get('/api/v1/force/payload');
-    root.querySelector('#f-pay').innerHTML = Object.entries(p).map(([k, v]) =>
-      `<dt>${esc(k)}</dt><dd class="mono small">${esc(JSON.stringify(v))}</dd>`).join('');
-  } catch (e) { root.querySelector('#f-pay').innerHTML = `<dt>error</dt><dd>${esc(e.message)}</dd>`; }
+    // The mismatch object and the notes are prose, not numbers: render them as
+    // wrapped text, not a single JSON.stringify line that runs off the card.
+    const kg = (x) => (typeof x === 'number' ? `${x.toFixed(3)} kg` : esc(String(x ?? '—')));
+    const m = p.mismatch || {};
+    const big = Math.abs(m.difference_kg || 0) > 0.05;
+    root.querySelector('#f-pay').innerHTML = `
+      <dl class="kv">
+        <dt>sensor</dt><dd>${kg(p.sensor_payload_kg)}</dd>
+        <dt>sensor CoG</dt><dd>${(p.sensor_payload_cog_mm || []).join(', ') || '—'} mm</dd>
+        <dt>robot</dt><dd>${kg(p.robot_payload_kg)}</dd>
+      </dl>
+      ${m.difference_kg !== undefined ? `
+        <div class="pay-mismatch">
+          <div class="small">sensor − robot =
+            <span class="tag ${big ? 'warn' : 'ok'}">${kg(m.difference_kg)}</span></div>
+          ${m.consequence ? `<div class="small dim" style="margin-top:6px">${esc(m.consequence)}</div>` : ''}
+          ${m.how_to_fix ? `<div class="small faint" style="margin-top:6px"><b>fix:</b> ${esc(m.how_to_fix)}</div>` : ''}
+        </div>` : ''}
+      ${p.note ? `<div class="small faint" style="margin-top:10px">${esc(p.note)}</div>` : ''}`;
+  } catch (e) { root.querySelector('#f-pay').innerHTML = `<div class="small">${esc(e.message)}</div>`; }
 
   try {
     const st = await api.get('/api/v1/force/strategies');
@@ -429,7 +467,7 @@ async function capabilities(root, api, log, toast) {
     const body = root.querySelector('#cap-body');
     body.className = 'grid cols-3';
     body.innerHTML = Object.entries(c.groups).map(([group, feats]) => card(group,
-      `<table><tbody>${Object.entries(feats).map(([name, f]) => {
+      `<table class="cap-table"><tbody>${Object.entries(feats).map(([name, f]) => {
         const cls = f.state === 'available' ? 'ok' : f.state === 'absent' ? 'bad' : 'warn';
         return `<tr><td style="text-align:left">${esc(name)}</td>
           <td class="small faint mono" style="text-align:left">${esc(f.method || '')}</td>

@@ -14,6 +14,15 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
 
 const j = (v) => JSON.stringify(v, null, 2);
 
+// The controller-side services are slow by nature. An FTP transfer waits on
+// the ftpd greeting (which on some controllers follows a reverse-DNS timeout
+// of ~30 s) plus the transfer; a shell command runs command_timeout_s on the
+// gateway. The 15 s default request timeout would abort these before the
+// gateway does, turning a slow-but-fine call into a false "timeout". Give them
+// room to reach the gateway's own timeout instead.
+const FTP_OPTS = { timeout: 120000 };
+const SVC_OPTS = { timeout: 90000 };
+
 function card(title, body, extra = '') {
   return `<div class="card"><h2>${esc(title)}${extra}</h2>${body}</div>`;
 }
@@ -620,7 +629,8 @@ async function files(root, apiClient, log, toast) {
     const p = root.querySelector('#cf-path').value.trim();
     cfOut.innerHTML = '<div class="small dim">listing…</div>';
     try {
-      const r = await apiClient.get(`/api/v1/controller/files?path=${encodeURIComponent(p)}`);
+      const r = await apiClient.get(
+        `/api/v1/controller/files?path=${encodeURIComponent(p)}`, FTP_OPTS);
       cfOut.innerHTML = jsonBlock(r);
     } catch (e) {
       cfOut.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
@@ -631,7 +641,7 @@ async function files(root, apiClient, log, toast) {
     cfOut.innerHTML = '<div class="small dim">reading…</div>';
     try {
       const r = await apiClient.get(
-        `/api/v1/controller/files/download?path=${encodeURIComponent(p)}`);
+        `/api/v1/controller/files/download?path=${encodeURIComponent(p)}`, FTP_OPTS);
       cfOut.innerHTML = jsonBlock(r);
     } catch (e) {
       cfOut.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
@@ -705,9 +715,9 @@ async function system(root, apiClient, log, toast) {
   root.querySelector('#sy-refresh').onclick = health;
   health();
 
-  const load = async (path, id, render) => {
+  const load = async (path, id, render, opts) => {
     try {
-      const r = await apiClient.get(path);
+      const r = await apiClient.get(path, opts);
       root.querySelector(id).innerHTML = render ? render(r) : jsonBlock(r);
     } catch (e) {
       root.querySelector(id).innerHTML =
@@ -727,7 +737,8 @@ async function system(root, apiClient, log, toast) {
   load('/api/v1/controller/services', '#sy-services', (r) => `
     ${Object.entries(r.enabled || {}).map(([k, v]) =>
       `<span class="tag ${v ? 'ok' : ''}">${esc(k)} ${v ? 'on' : 'off'}</span> `).join('')}
-    <div class="small faint" style="margin-top:8px">${esc(r.note || '')}</div>`);
+    <div class="small faint" style="margin-top:8px">${esc(r.note || '')}</div>`,
+    SVC_OPTS);
   load('/api/v1/controller/processes', '#sy-proc');
   load('/api/v1/controller/qconn', '#sy-qconn');
 
@@ -738,7 +749,7 @@ async function system(root, apiClient, log, toast) {
     out.innerHTML = '<div class="small dim">running…</div>';
     try {
       const r = await apiClient.post('/api/v1/controller/shell',
-        { command: cmd, confirm: true });
+        { command: cmd, confirm: true }, SVC_OPTS);
       out.innerHTML = jsonBlock(r);
       log(`shell: ${cmd}`, 'warn');
     } catch (e) {

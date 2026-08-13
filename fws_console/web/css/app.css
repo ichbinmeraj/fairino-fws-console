@@ -884,6 +884,25 @@ kbd {
 
 .kv dd.bad { color: var(--danger); }
 
+/* Force payload: the mismatch block carries prose (consequence, how-to-fix),
+   which must wrap inside the card, not stringify into an overflowing line. */
+.pay-mismatch {
+  margin-top: 10px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-s);
+  background: var(--raised);
+}
+.pay-mismatch div { overflow-wrap: anywhere; }
+
+/* Capabilities: RPC method names are long single tokens (GetActualToolFlange-
+   Pose). Left to themselves they force the column wide and shove the state tag
+   off the card's right edge, clipping it. Fix the layout: let the method wrap,
+   and pin the state tag to a fixed, always-visible right column. */
+.cap-table { table-layout: fixed; }
+.cap-table td { vertical-align: top; padding: 3px 8px 3px 0; }
+.cap-table td:nth-child(1) { width: 38%; overflow-wrap: anywhere; }
+.cap-table td:nth-child(2) { overflow-wrap: anywhere; }
+.cap-table td:last-child { width: 76px; text-align: right; white-space: nowrap; padding-right: 0; }
+
 /* ---------------------------------------------------------------- narrow */
 
 @media (max-width: 1150px) {

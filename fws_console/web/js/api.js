@@ -72,9 +72,13 @@ export class Api {
     if (this.token) headers['X-FWS-Control-Token'] = this.token;
 
     // A gateway on the far side of a tunnel can hang rather than refuse.
-    // Without this the UI has no way back to a usable state.
+    // Without this the UI has no way back to a usable state. Track WHY we
+    // aborted so the error can tell a slow-but-reachable gateway apart from an
+    // unreachable one -- conflating them once made a 45 s FTP probe read as
+    // "cannot reach gateway", which is both wrong and alarming.
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(new Error('timeout')), timeout);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, timeout);
     if (signal) signal.addEventListener('abort', () => ctl.abort(), { once: true });
 
     let res, text;
@@ -92,6 +96,19 @@ export class Api {
       // `e.isLocked` check downstream would mishandle.
       text = await res.text();
     } catch (e) {
+      if (timedOut) {
+        const secs = Math.round(timeout / 1000);
+        throw new ApiError(0, { detail:
+          `the gateway did not answer within ${secs}s. The controller-side `
+          + `call may still be running — a slow FTP transfer or service probe `
+          + `can take longer than that. Retry, or raise the request timeout.`,
+        }, path);
+      }
+      if (signal && signal.aborted) {
+        // The caller cancelled (navigated away, or a newer request supersedes
+        // this one). Not a failure worth surfacing as a red banner.
+        throw new ApiError(0, { detail: 'request cancelled' }, path);
+      }
       throw new ApiError(0, { detail: `cannot reach gateway: ${e.message}` }, path);
     } finally {
       clearTimeout(timer);

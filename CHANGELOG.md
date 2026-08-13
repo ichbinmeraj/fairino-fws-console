@@ -46,6 +46,29 @@ itself at `/console`.
   commands; a keyboard model (`?` sheet, `g`+`n` jumps); styled modal
   dialogs replacing native `confirm`/`prompt`.
 
+### Robustness
+
+Hardening found by driving every panel against a live FR5 (firmware
+v3.8.5.1), not only the simulator:
+
+- **I/O** — a whole read family that answers the same error for every channel
+  (a faulted controller returns `error 14` for all of `GetDI`) now collapses
+  to one line stating the reason, instead of a wall of red `DI? …DI?` tags
+  that read as a hardware fault. A family the firmware genuinely lacks says so
+  once; partial results still show one tag per channel.
+- **Force** — the payload card renders the mismatch object and its prose
+  (consequence, how-to-fix) as wrapped text in a bordered block, instead of a
+  single `JSON.stringify` line that ran off the card's right edge.
+- **Capabilities** — long RPC method names wrap and the available/absent tag
+  is pinned to an always-visible column; previously a long name shoved the tag
+  off the card and clipped it.
+- **Requests** — a request that times out is reported as "the gateway did not
+  answer within Ns" (it may be a slow FTP transfer or service probe), no
+  longer as the misleading "cannot reach gateway"; a caller-cancelled request
+  is not surfaced as an error at all. FTP- and shell-backed calls are given
+  timeouts that reach the gateway's own, so a slow-but-fine controller call no
+  longer aborts client-side.
+
 ### Accessibility
 
 - Every text token meets WCAG AA 4.5:1 against both surfaces in both themes,
