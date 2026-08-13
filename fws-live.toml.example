@@ -1,0 +1,34 @@
+# Example gateway configuration for a real robot with developer features on.
+# Copy to fws-live.toml (gitignored) and launch with:
+#   fws-console --config fws-live.toml
+#
+# EVERY default in FWS is the refusing/secure one. Each line below loosens
+# something deliberately — turn on only what you need.
+
+[features]
+# Exposes the generated command registry so the Commands / API panels can
+# invoke wire commands (POST /api/v1/invoke/<name>). Refused commands
+# (firmware writes, shutdown, RPC introspection) stay refused regardless.
+enable_command_passthrough = true
+
+[services]
+# The controller's own QNX services on the robot LAN. FWS gates each behind
+# its auth, control lock and audit; it cannot authenticate the daemons
+# themselves. FTP and the Lua validator are unprivileged.
+ftp_enabled = true            # true directory listing + raw file read (port 21)
+lua_validate_enabled = true   # compile-check Lua without uploading (port 8060)
+
+# MEASURED on an FR5 / QNXNTO-ftpd 20081216: the FTP daemon sends its 220
+# greeting only after ~30 s (a reverse-DNS lookup that must time out first),
+# so the 8 s default reports "unreachable". Raise the FTP timeouts past it.
+connect_timeout_s = 45.0
+command_timeout_s = 60.0
+
+# shell (telnet, 23) and qconn (8000) are ROOT-EQUIVALENT on this hardware,
+# so FWS refuses to serve them without an API key file. To enable them:
+#   shell_enabled = true
+#   qconn_enabled = true
+#
+# [auth]
+# # one "<key>  <label>" per line; keep the file mode 0600
+# api_keys_file = "api-keys"

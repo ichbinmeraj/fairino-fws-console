@@ -6,3 +6,8 @@ dist/
 .pytest_cache/
 .ruff_cache/
 *.log
+
+# local launch configs and credentials — never publish these
+fws-live.toml
+api-keys
+*.toml.local
