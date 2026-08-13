@@ -103,24 +103,26 @@ export class View3D {
   }
 
   _bindOrbit() {
-    // No free orbit: an instrument must not move under an accidental drag.
-    // The view changes only through the preset buttons and zoom (wheel or
-    // two-finger pinch).
+    // Drag orbits (re-targeted to the arm at grab time, skeleton LOD while
+    // the hand is on); two pointers pinch-zoom; the preset buttons snap to
+    // fixed framed views.
     const active = new Map();
     let pinchDist = 0;
 
     this.c.addEventListener('pointerdown', (e) => {
       this.c.setPointerCapture(e.pointerId);
+      if (active.size === 0) this._retarget();
+      this._interacting = true;
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
         const [a, b] = [...active.values()];
         pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
-        this._interacting = true;
       }
+      if (this.onGrab) this.onGrab();
     });
     const end = (e) => {
       active.delete(e.pointerId);
-      if (active.size < 2 && this._interacting) {
+      if (active.size === 0 && this._interacting) {
         this._interacting = false;
         this.requestDraw();
       }
@@ -129,7 +131,12 @@ export class View3D {
     this.c.addEventListener('pointercancel', end);
 
     this.c.addEventListener('pointermove', (e) => {
-      if (!active.has(e.pointerId)) return;
+      const prev = active.get(e.pointerId);
+      if (!prev) return;
+      if (active.size === 1) {
+        this.yaw += (e.clientX - prev.x) * 0.01;
+        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch + (e.clientY - prev.y) * 0.01));
+      }
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (active.size === 2) {
         const [a, b] = [...active.values()];
@@ -138,8 +145,8 @@ export class View3D {
           this.dist = Math.max(700, Math.min(5000, this.dist * pinchDist / d));
         }
         pinchDist = d;
-        this._schedule();
       }
+      this._schedule();
     });
 
     this.c.addEventListener('wheel', (e) => {
@@ -152,10 +159,11 @@ export class View3D {
     }, { passive: false });
   }
 
-  /** Fixed viewpoints, cockpit-style: predictable, framed, nothing free. */
+  /** Fixed viewpoints, cockpit-style: each snaps to a framed view. */
   preset(name) {
     const views = {
-      iso: [-35, 22], front: [90, 10], side: [0, 10], top: [-35, 78],
+      iso: [-35, 22], front: [90, 10], back: [-90, 10],
+      left: [0, 10], right: [180, 10], top: [-35, 78],
     };
     const [yawDeg, pitchDeg] = views[name] || views.iso;
     this.fit();                         // frames arm+base, clears pan

@@ -229,14 +229,6 @@ $('fault-banner-reset').onclick = () => run('reset faults', () => api.resetError
 $('btn-stop').onclick = () => run('STOP', () => api.stop(), { priority: true });
 $('btn-trail').onclick = () => view.clearTrail();
 $('btn-view-fit').onclick = () => view.fit();
-for (const b of document.querySelectorAll('#seg-view button')) {
-  b.onclick = () => {
-    view.preset(b.dataset.view);
-    for (const x of b.parentElement.children) {
-      x.setAttribute('aria-pressed', String(x === b));
-    }
-  };
-}
 
 // Esc = stop. The one keyboard shortcut, because reaching for a pointing
 // device mid-surprise is the slow path. Jogging has no keys, deliberately.
@@ -332,6 +324,21 @@ function syncControls() {
 /* ---------------------------------------------------------------- stage */
 
 const view = new View3D($('view'));
+
+for (const b of document.querySelectorAll('#seg-view button')) {
+  b.onclick = () => {
+    view.preset(b.dataset.view);
+    for (const x of b.parentElement.children) {
+      x.setAttribute('aria-pressed', String(x === b));
+    }
+  };
+}
+// A manual drag leaves no preset active: the highlight must not lie.
+view.onGrab = () => {
+  for (const x of document.querySelectorAll('#seg-view button')) {
+    x.setAttribute('aria-pressed', 'false');
+  }
+};
 
 /* ---------------------------------------------------------------- charts */
 
