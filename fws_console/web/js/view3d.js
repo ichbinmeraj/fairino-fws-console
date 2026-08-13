@@ -75,9 +75,20 @@ export class View3D {
     this.worker = null;
     if ('transferControlToOffscreen' in canvas && typeof Worker === 'function') {
       try {
-        const off = canvas.transferControlToOffscreen();
+        const backEl = document.getElementById('view-back');
+        const glEl = document.getElementById('view-gl');
         this.worker = new Worker('js/stage-worker.js', { type: 'module' });
-        this.worker.postMessage({ type: 'canvas', canvas: off }, [off]);
+        if (backEl && glEl) {
+          const offMain = canvas.transferControlToOffscreen();
+          const offBack = backEl.transferControlToOffscreen();
+          const offGl = glEl.transferControlToOffscreen();
+          this.worker.postMessage(
+            { type: 'layers', mainCanvas: offMain, backCanvas: offBack, glCanvas: offGl },
+            [offMain, offBack, offGl]);
+        } else {
+          const off = canvas.transferControlToOffscreen();
+          this.worker.postMessage({ type: 'canvas', canvas: off }, [off]);
+        }
       } catch { this.worker = null; }
     }
     // getContext must come AFTER the transfer attempt: a canvas with a 2D

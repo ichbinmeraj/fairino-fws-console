@@ -6,7 +6,11 @@
 // with mesh rasterisation for the main thread. The page posts meshes once,
 // then camera and pose updates; this worker owns the canvas.
 
-let ctx = null;
+let ctx = null;        // 2D context: full painter (no-GL fallback)
+let backCtx = null;    // 2D: grid + envelope, behind the arm
+let frontCtx = null;   // 2D: trail + triad + status text, above the arm
+let gl = null;         // WebGL2: the arm itself
+let glp = null;        // GL program + locations + per-link VBOs
 let W = 0, H = 0, DPR = 1;
 
 let meshes = null;       // [{v,f,fn,proj}]
@@ -309,6 +313,7 @@ function drawMeshes(g) {
 }
 
 function draw() {
+  if (gl) { drawGLLayers(); return; }
   if (!ctx || !W || !theme) return;
 
   let ph = 0;
@@ -359,6 +364,35 @@ function draw() {
   triad(g);
 }
 
+function drawGLLayers() {
+  if (!W || !theme) return;
+  let ph = 0;
+  if (points) {
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      ph += Math.round(p[0] * 10) * (i * 3 + 1)
+          + Math.round(p[1] * 10) * (i * 3 + 2)
+          + Math.round(p[2] * 10) * (i * 3 + 3);
+    }
+  }
+  const now = `${yaw},${pitch},${dist},${zc.toFixed(1)},${W},${H},`
+    + `${!points},${ph},${trail.length},${meshes ? 1 : 0},${theme.dark}`;
+  if (now === sig) return;
+  sig = now;
+
+  drawBackLayer();
+  if (points && meshes && frames) glDraw();
+  else if (gl) {
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  }
+  drawFrontLayer();
+  // Skeleton fallback while meshes are still loading: draw on the front
+  // layer so the arm is never invisible.
+  if (points && !(meshes && frames)) drawSkeleton(frontCtx);
+}
+
 function schedule() {
   if (rafPending) return;
   rafPending = true;
@@ -376,16 +410,40 @@ self.onmessage = (e) => {
     case 'canvas':
       ctx = m.canvas.getContext('2d');
       break;
-    case 'resize':
+    case 'layers':
+      // Three stacked canvases: 2D behind, GL middle, 2D in front. If GL
+      // is unavailable the top canvas becomes the full 2D painter and the
+      // other two stay blank.
+      try {
+        glp = glInit(m.glCanvas);
+        gl = glp ? m.glCanvas.getContext('webgl2') : null;
+      } catch { gl = null; glp = null; }
+      if (gl) {
+        backCtx = m.backCanvas.getContext('2d');
+        frontCtx = m.mainCanvas.getContext('2d');
+        if (meshes) glBuildLinks();
+      } else {
+        ctx = m.mainCanvas.getContext('2d');
+      }
+      self.postMessage({ type: 'mode', gl: Boolean(gl) });
+      break;
+    case 'resize': {
       W = m.w; H = m.h; DPR = m.dpr;
-      if (ctx) {
-        ctx.canvas.width = Math.max(1, Math.round(W * DPR));
-        ctx.canvas.height = Math.max(1, Math.round(H * DPR));
-        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      const fit2d = (c) => {
+        if (!c) return;
+        c.canvas.width = Math.max(1, Math.round(W * DPR));
+        c.canvas.height = Math.max(1, Math.round(H * DPR));
+        c.setTransform(DPR, 0, 0, DPR, 0, 0);
+      };
+      fit2d(ctx); fit2d(backCtx); fit2d(frontCtx);
+      if (gl) {
+        gl.canvas.width = Math.max(1, Math.round(W * DPR));
+        gl.canvas.height = Math.max(1, Math.round(H * DPR));
       }
       sig = '';
       schedule();
       break;
+    }
     case 'theme':
       theme = m.theme;
       sig = '';
@@ -408,6 +466,7 @@ self.onmessage = (e) => {
         lut: new Uint8Array(total),
         order: new Uint32Array(total),
       };
+      if (gl) glBuildLinks();
       sig = '';
       schedule();
       break;
@@ -442,3 +501,232 @@ self.onmessage = (e) => {
       break;
   }
 };
+
+/* ------------------------------------------------------------------ WebGL */
+/* The same shading model as the 2D painter, evaluated on the GPU: smoothed
+ * per-face normals (de-indexed to flat vertices), the piecewise material
+ * ramp in GLSL, gl_FrontFacing giving the flat interior of the solid-
+ * casting look, and the z-buffer replacing the painter's sort. Per frame
+ * the CPU uploads seven small uniforms; the GPU does everything else. */
+
+const VS = `#version 300 es
+precision highp float;
+in vec3 aPos;
+in vec3 aNrm;
+uniform mat3 uR;        // link rotation (world)
+uniform vec3 uT;        // link translation (world mm)
+uniform vec2 uCamYaw;   // cos, sin
+uniform vec2 uCamPitch; // cos, sin
+uniform vec4 uCam;      // dist, zc, f, unused
+uniform vec2 uHalf;     // W/2, H/2
+out vec3 vNrm;          // world-space smoothed normal
+void main() {
+  vec3 w = uR * aPos + uT;
+  float x1 = w.x * uCamYaw.x - w.y * uCamYaw.y;
+  float y1 = w.x * uCamYaw.y + w.y * uCamYaw.x;
+  float z1 = w.z - uCam.y;
+  float y2 = y1 * uCamPitch.x - z1 * uCamPitch.y;
+  float z2 = y1 * uCamPitch.y + z1 * uCamPitch.x;
+  float wclip = uCam.x + y2;                    // dist + depth
+  gl_Position = vec4(
+    x1 * uCam.z / uHalf.x,
+    z2 * uCam.z / uHalf.y,
+    (y2 / 6000.0) * wclip,                      // z/w = y2/6000: monotonic
+    wclip);
+  vNrm = uR * aNrm;
+}`;
+
+const FS = `#version 300 es
+precision highp float;
+in vec3 vNrm;
+uniform vec3 uEye;      // toward the camera, world space
+uniform vec3 uHalfVec;  // light/view half-vector
+uniform float uMat;     // 0 joint, 1 tube, 2 tool
+uniform float uDark;    // 1 dark theme, 0 light
+uniform vec3 uInterior;
+out vec4 frag;
+
+vec3 ramp(float m, float t, float dark) {
+  vec3 sh, base, hi;
+  if (m < 0.5) {        // joint: graphite
+    sh   = mix(vec3(84.,85.,90.),    vec3(22.,23.,27.),    dark);
+    base = mix(vec3(152.,155.,162.), vec3(124.,127.,133.), dark);
+    hi   = mix(vec3(228.,231.,236.), vec3(216.,220.,226.), dark);
+  } else if (m < 1.5) { // tube: light alloy
+    sh   = mix(vec3(112.,110.,106.), vec3(36.,36.,39.),    dark);
+    base = mix(vec3(221.,218.,212.), vec3(189.,188.,184.), dark);
+    hi   = mix(vec3(255.,255.,254.), vec3(252.,252.,250.), dark);
+  } else {              // tool: teal
+    sh   = mix(vec3(8.,74.,88.),     vec3(6.,48.,58.),     dark);
+    base = mix(vec3(12.,140.,163.),  vec3(16.,150.,176.),  dark);
+    hi   = mix(vec3(200.,244.,255.), vec3(190.,240.,252.), dark);
+  }
+  vec3 c = t < 0.72 ? mix(sh, base, t / 0.72) : mix(base, hi, (t - 0.72) / 0.28);
+  return c / 255.0;
+}
+
+void main() {
+  if (!gl_FrontFacing) { frag = vec4(uInterior, 1.0); return; }
+  vec3 L = vec3(-0.42, 0.32, 0.85);
+  vec3 n = normalize(vNrm);
+  float ndv = dot(n, uEye);
+  if (ndv < 0.0) { n = -n; ndv = -ndv; }
+  float diff = max(0.0, dot(n, L));
+  float ndh = max(0.0, dot(n, uHalfVec));
+  float inten = 0.18 + 0.24 * (0.5 + 0.5 * n.z)
+              + 0.72 * diff
+              + 0.28 * pow(ndh, 6.0) * ndv;
+  float t = clamp(inten * 44.0 / 63.0, 0.0, 1.0);
+  frag = vec4(ramp(uMat, t, uDark), 1.0);
+}`;
+
+function glInit(canvas) {
+  const g = canvas.getContext('webgl2', {
+    antialias: true, alpha: true, depth: true,
+    premultipliedAlpha: true, powerPreference: 'low-power',
+  });
+  if (!g) return null;
+  const sh = (type, src) => {
+    const o = g.createShader(type);
+    g.shaderSource(o, src);
+    g.compileShader(o);
+    if (!g.getShaderParameter(o, g.COMPILE_STATUS)) {
+      throw new Error(g.getShaderInfoLog(o));
+    }
+    return o;
+  };
+  const prog = g.createProgram();
+  g.attachShader(prog, sh(g.VERTEX_SHADER, VS));
+  g.attachShader(prog, sh(g.FRAGMENT_SHADER, FS));
+  g.linkProgram(prog);
+  if (!g.getProgramParameter(prog, g.LINK_STATUS)) {
+    throw new Error(g.getProgramInfoLog(prog));
+  }
+  g.useProgram(prog);
+  g.enable(g.DEPTH_TEST);
+  g.disable(g.CULL_FACE);          // backfaces ARE the interior look
+  const u = (n) => g.getUniformLocation(prog, n);
+  return {
+    prog,
+    aPos: g.getAttribLocation(prog, 'aPos'),
+    aNrm: g.getAttribLocation(prog, 'aNrm'),
+    uR: u('uR'), uT: u('uT'), uCamYaw: u('uCamYaw'), uCamPitch: u('uCamPitch'),
+    uCam: u('uCam'), uHalf: u('uHalf'), uEye: u('uEye'),
+    uHalfVec: u('uHalfVec'), uMat: u('uMat'), uDark: u('uDark'),
+    uInterior: u('uInterior'),
+    links: null,
+  };
+}
+
+/** De-index each link into flat vertices with per-face smoothed normals
+ * (WebGL flat-look without provoking-vertex games), one VAO per link. */
+function glBuildLinks() {
+  const g = gl;
+  glp.links = meshes.map((mesh) => {
+    if (!mesh) return null;
+    const nFaces = mesh.f.length / 3;
+    const buf = new Float32Array(nFaces * 3 * 6);
+    let o = 0;
+    for (let i = 0; i < mesh.f.length; i += 3) {
+      const nx = mesh.fn[i], ny = mesh.fn[i + 1], nz = mesh.fn[i + 2];
+      for (const vi of [mesh.f[i], mesh.f[i + 1], mesh.f[i + 2]]) {
+        const v3 = vi * 3;
+        buf[o++] = mesh.v[v3]; buf[o++] = mesh.v[v3 + 1]; buf[o++] = mesh.v[v3 + 2];
+        buf[o++] = nx; buf[o++] = ny; buf[o++] = nz;
+      }
+    }
+    const vao = g.createVertexArray();
+    g.bindVertexArray(vao);
+    const vbo = g.createBuffer();
+    g.bindBuffer(g.ARRAY_BUFFER, vbo);
+    g.bufferData(g.ARRAY_BUFFER, buf, g.STATIC_DRAW);
+    g.enableVertexAttribArray(glp.aPos);
+    g.vertexAttribPointer(glp.aPos, 3, g.FLOAT, false, 24, 0);
+    g.enableVertexAttribArray(glp.aNrm);
+    g.vertexAttribPointer(glp.aNrm, 3, g.FLOAT, false, 24, 12);
+    g.bindVertexArray(null);
+    return { vao, count: nFaces * 3 };
+  });
+}
+
+const GL_MAT = [0, 0, 1, 1, 0, 0, 2];
+
+function glDraw() {
+  const g = gl;
+  g.viewport(0, 0, g.canvas.width, g.canvas.height);
+  g.clearColor(0, 0, 0, 0);
+  g.clear(g.COLOR_BUFFER_BIT | g.DEPTH_BUFFER_BIT);
+  if (!meshes || !frames || !glp.links) return;
+
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const f = Math.min(W, H) * 2.2;
+  g.uniform2f(glp.uCamYaw, cy, sy);
+  g.uniform2f(glp.uCamPitch, cp, sp);
+  g.uniform4f(glp.uCam, dist, zc, f, 0);
+  g.uniform2f(glp.uHalf, W / 2, H / 2);
+
+  const vwx = -sy * cp, vwy = -cy * cp, vwz = sp;
+  let hx = -0.42 + vwx, hy = 0.32 + vwy, hz = 0.85 + vwz;
+  const hl = Math.hypot(hx, hy, hz) || 1;
+  g.uniform3f(glp.uEye, vwx, vwy, vwz);
+  g.uniform3f(glp.uHalfVec, hx / hl, hy / hl, hz / hl);
+  g.uniform1f(glp.uDark, theme && theme.dark ? 1 : 0);
+  const inr = theme && theme.dark ? [15 / 255, 17 / 255, 20 / 255]
+    : [70 / 255, 74 / 255, 80 / 255];
+  g.uniform3f(glp.uInterior, inr[0], inr[1], inr[2]);
+
+  for (let li = 0; li < glp.links.length; li++) {
+    const link = glp.links[li];
+    const fr = frames[li];
+    if (!link || !fr) continue;
+    const R = fr.R;
+    g.uniformMatrix3fv(glp.uR, false, [   // column-major
+      R[0][0], R[1][0], R[2][0],
+      R[0][1], R[1][1], R[2][1],
+      R[0][2], R[1][2], R[2][2],
+    ]);
+    g.uniform3f(glp.uT, fr.p[0], fr.p[1], fr.p[2]);
+    g.uniform1f(glp.uMat, GL_MAT[li] ?? 0);
+    g.bindVertexArray(link.vao);
+    g.drawArrays(g.TRIANGLES, 0, link.count);
+  }
+  g.bindVertexArray(null);
+}
+
+/* Layered 2D: grid/envelope behind the arm, trail/triad/status above it. */
+
+function drawBackLayer() {
+  const g = backCtx;
+  if (!g) return;
+  g.clearRect(0, 0, W, H);
+  grid(g, theme.line);
+  if (model && model.reach) envelope(g, theme.line, model.reach);
+}
+
+function drawFrontLayer() {
+  const g = frontCtx;
+  if (!g) return;
+  g.clearRect(0, 0, W, H);
+  if (!points) {
+    g.fillStyle = theme.dim;
+    g.font = '13px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.fillText('waiting for telemetry…', W / 2, H / 2);
+    g.textAlign = 'start';
+    return;
+  }
+  if (trail.length > 1) {
+    g.strokeStyle = theme.accent;
+    g.globalAlpha = 0.35;
+    g.lineWidth = 1.5;
+    g.beginPath();
+    trail.forEach((p, i) => {
+      const s = project(p);
+      i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]);
+    });
+    g.stroke();
+    g.globalAlpha = 1;
+  }
+  triad(g);
+}

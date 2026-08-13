@@ -437,13 +437,15 @@ tbody tr:last-child td { border-bottom: none; }
 /* ---------------------------------------------------------------- stage */
 
 .stage-card { position: relative; padding: 0; overflow: hidden; }
-#view {
+#view-back, #view-gl, #view {
   position: absolute; inset: 0; width: 100%; height: 100%; display: block;
-  touch-action: none; cursor: grab;
+}
+#view-back {
   background:
     radial-gradient(ellipse at 50% 62%, var(--accent-bg) 0%, transparent 55%),
     var(--bg);
 }
+#view { touch-action: none; cursor: grab; }
 #view:active { cursor: grabbing; }
 
 .stage-overlay {
