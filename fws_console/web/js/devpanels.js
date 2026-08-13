@@ -1,0 +1,918 @@
+// Developer panels: the whole gateway surface, not just the operator's slice.
+//
+// The API explorer is generated from the gateway's own /openapi.json, so it
+// covers every operation the gateway exposes BY CONSTRUCTION — including
+// ones added after this console was written. The hand-built panels beside
+// it exist where the raw JSON is not the useful view: the 594-command
+// registry, the 282-function Lua catalogue, the file kinds, system health.
+
+import { ApiError } from './api.js';
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const j = (v) => JSON.stringify(v, null, 2);
+
+function card(title, body, extra = '') {
+  return `<div class="card"><h2>${esc(title)}${extra}</h2>${body}</div>`;
+}
+
+function fail(log, toast, msg) {
+  log(`failed: ${msg}`, 'err');
+  if (toast) toast(msg, 'err');
+}
+
+/** Pretty-print a JSON value into a scrollable code block. */
+function jsonBlock(value, id = '') {
+  return `<pre class="jsonview"${id ? ` id="${id}"` : ''}>${esc(j(value))}</pre>`;
+}
+
+// --- API explorer --------------------------------------------------------
+
+async function api(root, apiClient, log, toast) {
+  root.innerHTML = `
+    <div class="grid" style="grid-template-columns:minmax(300px,380px) minmax(0,1fr)">
+      <div class="card" style="max-height:calc(100dvh - 150px);display:flex;flex-direction:column">
+        <h2>Operations <span class="spacer"></span>
+          <span class="small dim" id="api-count"></span></h2>
+        <input id="api-q" type="search" placeholder="Filter path or summary…"
+               style="width:100%;margin-bottom:8px">
+        <div class="row tight" style="margin-bottom:8px">
+          <label class="small dim"><input type="checkbox" id="api-reads" checked>
+            reads</label>
+          <label class="small dim"><input type="checkbox" id="api-writes" checked>
+            writes</label>
+        </div>
+        <div class="scroll" style="flex:1;min-height:0" id="api-list"></div>
+      </div>
+      <div class="card" id="api-detail">
+        <h2>Request</h2>
+        <div class="empty">select an operation</div>
+      </div>
+    </div>`;
+
+  let spec = null;
+  try {
+    spec = await apiClient.get('/openapi.json');
+  } catch (e) {
+    root.querySelector('#api-list').innerHTML =
+      `<div class="empty">cannot load the OpenAPI spec: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  const ops = [];
+  for (const [path, item] of Object.entries(spec.paths)) {
+    for (const [method, op] of Object.entries(item)) {
+      if (!['get', 'post', 'put', 'delete', 'patch'].includes(method)) continue;
+      ops.push({
+        method: method.toUpperCase(), path, op,
+        write: method !== 'get',
+        summary: (op.summary || '').trim(),
+      });
+    }
+  }
+  ops.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
+
+  /** Resolve a $ref chain into the actual schema object. */
+  const deref = (s) => {
+    let out = s, guard = 0;
+    while (out && out.$ref && guard++ < 10) {
+      const name = out.$ref.split('/').pop();
+      out = spec.components?.schemas?.[name];
+    }
+    return out || {};
+  };
+
+  /** Build a plausible request body from a schema: defaults where given,
+   * type-appropriate placeholders otherwise. The developer edits it. */
+  const skeleton = (schema, depth = 0) => {
+    const s = deref(schema);
+    if (depth > 4) return null;
+    if (s.default !== undefined) return s.default;
+    if (s.enum) return s.enum[0];
+    if (s.anyOf || s.oneOf) return skeleton((s.anyOf || s.oneOf)[0], depth + 1);
+    switch (s.type) {
+      case 'object': {
+        const out = {};
+        for (const [k, v] of Object.entries(s.properties || {})) {
+          out[k] = skeleton(v, depth + 1);
+        }
+        return out;
+      }
+      case 'array': return [skeleton(s.items || {}, depth + 1)];
+      case 'integer': case 'number': return s.minimum ?? 0;
+      case 'boolean': return false;
+      case 'string': return '';
+      default: return null;
+    }
+  };
+
+  const listEl = root.querySelector('#api-list');
+  const countEl = root.querySelector('#api-count');
+  const detailEl = root.querySelector('#api-detail');
+
+  const render = () => {
+    const q = root.querySelector('#api-q').value.trim().toLowerCase();
+    const reads = root.querySelector('#api-reads').checked;
+    const writes = root.querySelector('#api-writes').checked;
+    const hit = ops.filter((o) =>
+      (o.write ? writes : reads)
+      && (!q || o.path.toLowerCase().includes(q) || o.summary.toLowerCase().includes(q)));
+    countEl.textContent = `${hit.length} of ${ops.length}`;
+    listEl.innerHTML = hit.map((o, i) => `
+      <button class="api-op" data-op="${ops.indexOf(o)}">
+        <span class="verb v-${o.method.toLowerCase()}">${o.method}</span>
+        <span class="mono">${esc(o.path.replace('/api/v1', ''))}</span>
+      </button>`).join('') || '<div class="empty">nothing matches</div>';
+    for (const b of listEl.querySelectorAll('[data-op]')) {
+      b.onclick = () => {
+        for (const x of listEl.querySelectorAll('[data-op]')) x.classList.remove('sel');
+        b.classList.add('sel');
+        show(ops[Number(b.dataset.op)]);
+      };
+    }
+  };
+
+  const show = (o) => {
+    const params = (o.op.parameters || []).map((p) => ({
+      name: p.name, in: p.in, required: p.required,
+      schema: deref(p.schema || {}),
+    }));
+    const bodySchema = o.op.requestBody?.content?.['application/json']?.schema;
+    const body = bodySchema ? skeleton(bodySchema) : null;
+
+    detailEl.innerHTML = `
+      <h2><span class="verb v-${o.method.toLowerCase()}">${o.method}</span>
+        <span class="mono" style="text-transform:none;letter-spacing:0;color:var(--text)">${esc(o.path)}</span>
+        <span class="spacer"></span>
+        <span class="small dim" id="api-timing"></span></h2>
+      ${o.summary ? `<p class="small dim" style="margin:-4px 0 12px">${esc(o.summary)}</p>` : ''}
+      ${params.length ? `<div id="api-params" style="margin-bottom:10px"></div>` : ''}
+      ${body !== null ? `
+        <label class="small dim" style="display:block;margin-bottom:4px">Request body (JSON)</label>
+        <textarea id="api-body" spellcheck="false"
+          style="width:100%;height:${Math.min(220, 40 + j(body).split('\n').length * 17)}px">${esc(j(body))}</textarea>` : ''}
+      <div class="row" style="margin:10px 0">
+        <button class="btn btn-primary" id="api-send"${o.write ? ' data-cmd="1"' : ''}>Send</button>
+        <button class="btn btn-ghost btn-sm" id="api-curl">Copy as curl</button>
+        <span class="small faint" id="api-note">${o.write
+          ? 'writes require the control lease' : 'read-only'}</span>
+      </div>
+      <div id="api-out"></div>`;
+
+    if (params.length) {
+      root.querySelector('#api-params').innerHTML = params.map((p) => `
+        <div class="field-row" style="margin:6px 0">
+          <label style="width:110px">${esc(p.name)}
+            <span class="faint">${p.in}${p.required ? ' *' : ''}</span></label>
+          <input data-param="${esc(p.name)}" data-in="${p.in}"
+                 value="${esc(p.schema.default ?? '')}"
+                 placeholder="${esc(p.schema.type || '')}" style="flex:1">
+        </div>`).join('');
+    }
+
+    const build = () => {
+      let path = o.path;
+      const query = [];
+      for (const el of detailEl.querySelectorAll('[data-param]')) {
+        const v = el.value.trim();
+        if (el.dataset.in === 'path') {
+          path = path.replace(`{${el.dataset.param}}`, encodeURIComponent(v));
+        } else if (v !== '') {
+          query.push(`${encodeURIComponent(el.dataset.param)}=${encodeURIComponent(v)}`);
+        }
+      }
+      if (query.length) path += `?${query.join('&')}`;
+      let payload;
+      const ta = detailEl.querySelector('#api-body');
+      if (ta) {
+        try { payload = JSON.parse(ta.value); }
+        catch (e) { throw new Error(`request body is not valid JSON: ${e.message}`); }
+      }
+      return { path, payload };
+    };
+
+    detailEl.querySelector('#api-send').onclick = async () => {
+      const out = detailEl.querySelector('#api-out');
+      let req;
+      try { req = build(); } catch (e) {
+        out.innerHTML = `<div class="banner danger"><span>${esc(e.message)}</span></div>`;
+        return;
+      }
+      out.innerHTML = '<div class="small dim">sending…</div>';
+      const t0 = performance.now();
+      try {
+        const res = await apiClient.request(o.method, req.path, req.payload);
+        const ms = (performance.now() - t0).toFixed(0);
+        detailEl.querySelector('#api-timing').textContent = `${ms} ms`;
+        out.innerHTML = `<span class="tag ok">200 OK</span>${jsonBlock(res)}`;
+        log(`${o.method} ${req.path}`);
+      } catch (e) {
+        const ms = (performance.now() - t0).toFixed(0);
+        detailEl.querySelector('#api-timing').textContent = `${ms} ms`;
+        const status = e instanceof ApiError ? e.status : 0;
+        out.innerHTML = `<span class="tag bad">${status || 'ERR'}</span>`
+          + jsonBlock(e instanceof ApiError ? e.body : { detail: e.message });
+        log(`${o.method} ${req.path} — ${e.message}`, 'err');
+      }
+    };
+
+    detailEl.querySelector('#api-curl').onclick = () => {
+      let req;
+      try { req = build(); } catch { return; }
+      const parts = [`curl -X ${o.method}`, `'${apiClient.root}${req.path}'`];
+      if (req.payload !== undefined) {
+        parts.push(`-H 'content-type: application/json'`);
+        parts.push(`-d '${JSON.stringify(req.payload)}'`);
+      }
+      if (o.write) parts.push(`-H "X-FWS-Control-Token: $TOKEN"`);
+      const text = parts.join(' \\\n  ');
+      navigator.clipboard?.writeText(text).then(
+        () => log('curl copied to clipboard', 'ok'),
+        () => log(text));
+    };
+
+    // A freshly built panel must obey the current lease state.
+    document.dispatchEvent(new CustomEvent('fws-sync'));
+  };
+
+  root.querySelector('#api-q').oninput = render;
+  root.querySelector('#api-reads').onchange = render;
+  root.querySelector('#api-writes').onchange = render;
+  render();
+}
+
+// --- Command registry ----------------------------------------------------
+
+async function commands(root, apiClient, log, toast) {
+  root.innerHTML = `
+    <div class="grid" style="grid-template-columns:minmax(300px,400px) minmax(0,1fr)">
+      <div class="card" style="max-height:calc(100dvh - 150px);display:flex;flex-direction:column">
+        <h2>Wire commands <span class="spacer"></span>
+          <span class="small dim" id="cmd-count"></span></h2>
+        <input id="cmd-q" type="search" placeholder="Filter name…"
+               style="width:100%;margin-bottom:8px">
+        <div class="row tight" style="margin-bottom:8px">
+          <select id="cmd-danger"><option value="">any danger</option></select>
+          <select id="cmd-kind"><option value="">any kind</option></select>
+        </div>
+        <div class="scroll" style="flex:1;min-height:0" id="cmd-list"></div>
+      </div>
+      <div class="card" id="cmd-detail">
+        <h2>Command</h2>
+        <div class="empty">select a command</div>
+      </div>
+    </div>
+    <div class="grid cols-3" style="margin-top:14px">
+      ${card('Registry summary', '<dl class="kv" id="cmd-summary"></dl>')}
+      <div class="card" style="grid-column:span 2">
+        <h2>Invoke policy</h2>
+        <div class="scroll" style="max-height:260px"><table>
+          <thead><tr><th style="text-align:left">Class</th><th>Callable</th>
+          <th>Lock</th><th>Confirm</th><th style="text-align:left">Why</th></tr></thead>
+          <tbody id="cmd-policy"></tbody></table></div>
+      </div>
+    </div>`;
+
+  let all = [];
+  try {
+    const r = await apiClient.get('/api/v1/commands?limit=1000');
+    all = r.commands || [];
+    const s = r.summary || {};
+    root.querySelector('#cmd-summary').innerHTML = Object.entries(s)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
+    const dangers = [...new Set(all.map((c) => c.danger))].sort();
+    const kinds = [...new Set(all.map((c) => c.kind))].sort();
+    for (const d of dangers) {
+      root.querySelector('#cmd-danger').insertAdjacentHTML('beforeend',
+        `<option value="${esc(d)}">${esc(d)}</option>`);
+    }
+    for (const k of kinds) {
+      root.querySelector('#cmd-kind').insertAdjacentHTML('beforeend',
+        `<option value="${esc(k)}">${esc(k)}</option>`);
+    }
+  } catch (e) { fail(log, toast, `commands: ${e.message}`); }
+
+  try {
+    const p = await apiClient.get('/api/v1/invoke/policy');
+    root.querySelector('#cmd-policy').innerHTML = (p.matrix || []).map((m) => `
+      <tr><td style="text-align:left"><span class="tag ${m.callable ? '' : 'bad'}">${esc(m.class)}</span></td>
+      <td>${m.callable ? 'yes' : 'no'}</td><td>${esc(m.lock || '—')}</td>
+      <td>${m.confirm === null ? '—' : m.confirm ? 'yes' : 'no'}</td>
+      <td style="text-align:left" class="small dim">${esc(m.why || '')}</td></tr>`).join('');
+  } catch (e) { log(`invoke policy: ${e.message}`, 'err'); }
+
+  const listEl = root.querySelector('#cmd-list');
+  const countEl = root.querySelector('#cmd-count');
+  const dangerClass = (d) => ({
+    refused: 'bad', motion: 'warn', unknown: 'warn', stop: 'info', read: 'ok',
+  }[d] || '');
+
+  const render = () => {
+    const q = root.querySelector('#cmd-q').value.trim().toLowerCase();
+    const d = root.querySelector('#cmd-danger').value;
+    const k = root.querySelector('#cmd-kind').value;
+    const hit = all.filter((c) =>
+      (!q || c.name.toLowerCase().includes(q))
+      && (!d || c.danger === d) && (!k || c.kind === k));
+    countEl.textContent = `${hit.length} of ${all.length}`;
+    listEl.innerHTML = hit.slice(0, 400).map((c) => `
+      <button class="api-op" data-cmd-name="${esc(c.name)}">
+        <span class="tag ${dangerClass(c.danger)}" style="min-width:64px">${esc(c.danger)}</span>
+        <span class="mono">${esc(c.name)}</span>
+      </button>`).join('') || '<div class="empty">nothing matches</div>';
+    for (const b of listEl.querySelectorAll('[data-cmd-name]')) {
+      b.onclick = () => {
+        for (const x of listEl.querySelectorAll('[data-cmd-name]')) x.classList.remove('sel');
+        b.classList.add('sel');
+        showCmd(all.find((c) => c.name === b.dataset.cmdName));
+      };
+    }
+  };
+
+  const showCmd = (c) => {
+    const el = root.querySelector('#cmd-detail');
+    const args = (c.wire_args || []).map((a, i) =>
+      `${a}${c.wire_types && c.wire_types[i] ? `: ${c.wire_types[i]}` : ''}`);
+    el.innerHTML = `
+      <h2>${esc(c.name)}<span class="spacer"></span>
+        <span class="tag ${dangerClass(c.danger)}">${esc(c.danger)}</span>
+        <span class="tag">${esc(c.kind)}</span>
+        <span class="tag ${c.verified ? 'ok' : ''}">${c.verified ? 'verified' : 'unverified'}</span>
+      </h2>
+      ${c.brief ? `<p class="small dim" style="margin:-4px 0 10px">${esc(c.brief)}</p>` : ''}
+      <dl class="kv" style="margin-bottom:10px">
+        <dt>wire name</dt><dd class="mono">${esc(c.wire_name || c.name)}</dd>
+        <dt>arity</dt><dd>${c.arity ?? '—'}</dd>
+        <dt>confidence</dt><dd>${esc(c.confidence || '—')}</dd>
+        <dt>callable</dt><dd>${c.callable ? 'yes' : 'no'}</dd>
+        <dt>lock</dt><dd>${esc(c.requires_lock || 'none')}</dd>
+        <dt>confirm</dt><dd>${c.requires_confirm ? 'required' : 'no'}</dd>
+      </dl>
+      ${args.length ? `<div class="small dim">wire args</div>
+        <div class="mono small" style="margin-bottom:10px">(${esc(args.join(', '))})</div>` : ''}
+      ${(c.basis || []).length ? `<div class="small dim">basis</div>
+        <ul class="small dim" style="margin:2px 0 10px 16px">${
+          c.basis.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+      ${(c.hazards || []).length ? `<div class="banner warn" style="margin-bottom:10px">
+        <span class="small">${c.hazards.map(esc).join('<br>')}</span></div>` : ''}
+      ${c.callable ? `
+        <label class="small dim" style="display:block;margin-bottom:4px">
+          Arguments (JSON array, WIRE order)</label>
+        <textarea id="cmd-args" spellcheck="false" style="width:100%;height:64px">[]</textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn btn-primary" id="cmd-send" data-cmd="1">Invoke</button>
+          <label class="small dim"><input type="checkbox" id="cmd-confirm">
+            confirm</label>
+          <span class="small faint">POST /invoke/${esc(c.name)}</span>
+        </div>
+        <div id="cmd-out" style="margin-top:10px"></div>`
+        : `<div class="banner danger"><span class="small">This command is not
+             directly callable${c.danger === 'refused' ? ' — refused by policy' : ''}.</span></div>`}`;
+
+    if (c.callable) {
+      el.querySelector('#cmd-send').onclick = async () => {
+        const out = el.querySelector('#cmd-out');
+        let args;
+        try { args = JSON.parse(el.querySelector('#cmd-args').value); }
+        catch (e) {
+          out.innerHTML = `<div class="banner danger"><span>args must be a JSON array: ${esc(e.message)}</span></div>`;
+          return;
+        }
+        out.innerHTML = '<div class="small dim">invoking…</div>';
+        try {
+          const res = await apiClient.post(`/api/v1/invoke/${encodeURIComponent(c.name)}`,
+            { args, confirm: el.querySelector('#cmd-confirm').checked });
+          out.innerHTML = `<span class="tag ok">ok</span>${jsonBlock(res)}`;
+          log(`invoke ${c.name}`, 'ok');
+        } catch (e) {
+          out.innerHTML = `<span class="tag bad">${e instanceof ApiError ? e.status : 'ERR'}</span>`
+            + jsonBlock(e instanceof ApiError ? e.body : { detail: e.message });
+          fail(log, toast, `invoke ${c.name}: ${e.message}`);
+        }
+      };
+      document.dispatchEvent(new CustomEvent('fws-sync'));
+    }
+  };
+
+  root.querySelector('#cmd-q').oninput = render;
+  root.querySelector('#cmd-danger').onchange = render;
+  root.querySelector('#cmd-kind').onchange = render;
+  render();
+}
+
+// --- Lua catalogue -------------------------------------------------------
+
+async function lua(root, apiClient, log, toast) {
+  root.innerHTML = `
+    <div class="grid" style="grid-template-columns:minmax(300px,400px) minmax(0,1fr)">
+      <div class="card" style="max-height:calc(100dvh - 150px);display:flex;flex-direction:column">
+        <h2>Lua functions <span class="spacer"></span>
+          <span class="small dim" id="lua-count"></span></h2>
+        <input id="lua-q" type="search" placeholder="Filter name…"
+               style="width:100%;margin-bottom:8px">
+        <div class="scroll" style="flex:1;min-height:0" id="lua-list"></div>
+      </div>
+      <div class="card" id="lua-detail"><h2>Function</h2>
+        <div class="empty">select a function</div></div>
+    </div>
+    <div class="grid cols-3" style="margin-top:14px">
+      ${card('Catalogue', '<dl class="kv" id="lua-summary"></dl>')}
+      ${card('Firmware', '<div id="lua-firmware" class="small dim">loading…</div>')}
+      ${card('Manual conflicts', '<div id="lua-conflicts" class="small dim">loading…</div>')}
+      <div class="card" style="grid-column:1/-1">
+        <h2>Compile a snippet
+          <span class="spacer"></span>
+          <span class="small faint" id="lua-validator-state">checking validator…</span></h2>
+        <textarea id="lua-src" spellcheck="false" style="width:100%;height:110px"
+          placeholder="-- validated by the controller's own Lua compiler
+PrintMsg('hello')"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn btn-primary btn-sm" id="lua-check" data-cmd="1">Validate</button>
+        </div>
+        <div id="lua-check-out" style="margin-top:8px"></div>
+      </div>
+      <div class="card" style="grid-column:1/-1">
+        <h2>RPC ↔ Lua bridge</h2>
+        <div id="lua-bridge" class="small dim">loading…</div>
+      </div>
+      <div class="card" style="grid-column:1/-1">
+        <h2>Manual sections</h2>
+        <div id="lua-sections" class="small dim">loading…</div>
+      </div>
+    </div>`;
+
+  let fns = [];
+  try {
+    const r = await apiClient.get('/api/v1/lua/functions?limit=1000');
+    fns = r.functions || [];
+    root.querySelector('#lua-summary').innerHTML = Object.entries(r.summary || {})
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd class="small">${
+        Array.isArray(v) ? esc(v.join(', ') || '—') : v}</dd>`).join('');
+  } catch (e) { fail(log, toast, `lua functions: ${e.message}`); }
+
+  try {
+    const f = await apiClient.get('/api/v1/lua/firmware');
+    root.querySelector('#lua-firmware').innerHTML = `
+      <dl class="kv"><dt>firmware</dt><dd class="mono">${esc(f.firmware || '—')}</dd>
+      <dt>absent here</dt><dd>${(f.absent || []).length}</dd></dl>
+      <div class="scroll" style="max-height:150px;margin-top:8px">
+        <div class="mono small">${(f.absent || []).map(esc).join('<br>')}</div></div>`;
+  } catch (e) { root.querySelector('#lua-firmware').textContent = e.message; }
+
+  try {
+    const c = await apiClient.get('/api/v1/lua/conflicts');
+    const order = Object.entries(c.argument_order || {});
+    root.querySelector('#lua-conflicts').innerHTML = order.length
+      ? order.map(([name, d]) => `
+          <div class="banner warn" style="margin-bottom:8px">
+            <span class="small"><b>${esc(name)}</b><br>
+            RPC: <span class="mono">${esc((d.rpc_order || []).join(', '))}</span><br>
+            Lua: <span class="mono">${esc((d.lua_order || []).join(', '))}</span><br>
+            ${esc(d.consequence || '')}</span></div>`).join('')
+      : '<div class="empty">none</div>';
+  } catch (e) { root.querySelector('#lua-conflicts').textContent = e.message; }
+
+  try {
+    const s = await apiClient.get('/api/v1/lua/sections');
+    root.querySelector('#lua-sections').innerHTML = `<div class="grid cols-3">`
+      + Object.entries(s.sections || {}).map(([sec, names]) => `
+        <div><div class="small" style="color:var(--text);font-weight:600">${esc(sec)}</div>
+        <div class="mono small dim">${names.map(esc).join(', ')}</div></div>`).join('')
+      + '</div>';
+  } catch (e) { root.querySelector('#lua-sections').textContent = e.message; }
+
+  try {
+    const b = await apiClient.get('/api/v1/lua/bridge');
+    root.querySelector('#lua-bridge').innerHTML = jsonBlock(b);
+  } catch (e) { root.querySelector('#lua-bridge').textContent = e.message; }
+
+  try {
+    const v = await apiClient.get('/api/v1/controller/lua-validator');
+    root.querySelector('#lua-validator-state').textContent =
+      v.enabled ? 'controller compiler available' : 'validator service disabled';
+  } catch (e) {
+    root.querySelector('#lua-validator-state').textContent = e.message.slice(0, 60);
+  }
+
+  root.querySelector('#lua-check').onclick = async () => {
+    const out = root.querySelector('#lua-check-out');
+    out.innerHTML = '<div class="small dim">compiling on the controller…</div>';
+    try {
+      const r = await apiClient.post('/api/v1/controller/lua-validate',
+        { source: root.querySelector('#lua-src').value });
+      const ok = r.verdict === 'success' || r.ok === true;
+      out.innerHTML = `<span class="tag ${ok ? 'ok' : 'bad'}">${esc(r.verdict || (ok ? 'ok' : 'rejected'))}</span>`
+        + jsonBlock(r);
+    } catch (e) {
+      out.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+  document.dispatchEvent(new CustomEvent('fws-sync'));
+
+  const listEl = root.querySelector('#lua-list');
+  const render = () => {
+    const q = root.querySelector('#lua-q').value.trim().toLowerCase();
+    const hit = fns.filter((f) => !q || (f.name || '').toLowerCase().includes(q));
+    root.querySelector('#lua-count').textContent = `${hit.length} of ${fns.length}`;
+    listEl.innerHTML = hit.slice(0, 400).map((f) => `
+      <button class="api-op" data-fn="${esc(f.name)}">
+        <span class="mono">${esc(f.name)}</span>
+        ${f.in_rpc ? '<span class="tag ok">rpc</span>' : ''}
+      </button>`).join('') || '<div class="empty">nothing matches</div>';
+    for (const b of listEl.querySelectorAll('[data-fn]')) {
+      b.onclick = async () => {
+        for (const x of listEl.querySelectorAll('[data-fn]')) x.classList.remove('sel');
+        b.classList.add('sel');
+        const el = root.querySelector('#lua-detail');
+        el.innerHTML = '<h2>Function</h2><div class="small dim">loading…</div>';
+        try {
+          const d = await apiClient.get(`/api/v1/lua/functions/${encodeURIComponent(b.dataset.fn)}`);
+          el.innerHTML = `<h2>${esc(d.name || b.dataset.fn)}</h2>${jsonBlock(d)}`;
+        } catch (e) {
+          el.innerHTML = `<h2>${esc(b.dataset.fn)}</h2>`
+            + `<div class="banner danger"><span>${esc(e.message)}</span></div>`;
+        }
+      };
+    }
+  };
+  root.querySelector('#lua-q').oninput = render;
+  render();
+}
+
+// --- Files (gateway + controller) ---------------------------------------
+
+async function files(root, apiClient, log, toast) {
+  root.innerHTML = `
+    <div class="grid cols-3">
+      ${card('File kinds', '<div id="f-kinds" class="small dim">loading…</div>')}
+      <div class="card" style="grid-column:span 2">
+        <h2>Controller filesystem
+          <span class="spacer"></span>
+          <span class="small faint">requires the shell/FTP service</span></h2>
+        <div class="field-row" style="margin-top:0">
+          <input id="cf-path" value="/fruser" style="flex:1"
+                 placeholder="/fruser">
+          <button class="btn btn-sm" id="cf-list">List</button>
+          <button class="btn btn-sm" id="cf-read">Read</button>
+        </div>
+        <div id="cf-out" style="margin-top:10px"></div>
+      </div>
+      ${card('Lua compile verdicts',
+        '<div id="f-verdicts" class="small dim">loading…</div>',
+        '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="f-v-refresh">refresh</button>')}
+      ${card('Backups', '<div id="f-backup" class="small dim">loading…</div>')}
+      ${card('Program versions', `
+        <div class="field-row" style="margin-top:0">
+          <input id="f-ver-name" placeholder="program.lua" style="flex:1">
+          <button class="btn btn-sm" id="f-ver-go">Versions</button>
+        </div>
+        <div id="f-ver-out" style="margin-top:8px"></div>`)}
+    </div>`;
+
+  try {
+    const k = await apiClient.get('/api/v1/files');
+    root.querySelector('#f-kinds').innerHTML = Object.entries(k.kinds || {})
+      .map(([name, d]) => `
+        <div style="margin-bottom:10px">
+          <div class="mono" style="color:var(--text)">${esc(name)}</div>
+          <div class="small dim">${esc(d.describes || '')}</div>
+          <div class="small faint">ops: ${esc((d.operations || []).join(', '))} ·
+            max ${d.max_bytes ?? '—'} B ·
+            ${d.verified_on_hardware ? 'verified' : 'unverified'}</div>
+        </div>`).join('');
+  } catch (e) { root.querySelector('#f-kinds').textContent = e.message; }
+
+  const verdicts = async () => {
+    try {
+      const v = await apiClient.get('/api/v1/files/-/verdicts');
+      root.querySelector('#f-verdicts').innerHTML = `
+        <dl class="kv">
+          <dt>enabled</dt><dd>${v.log_fetch?.enabled ? 'yes' : 'no'}</dd>
+          <dt>fetches</dt><dd>${v.log_fetch?.fetches ?? 0}</dd>
+          <dt>from cache</dt><dd>${v.log_fetch?.served_from_cache ?? 0}</dd>
+        </dl>
+        <div class="small dim" style="margin-top:8px">${
+          Object.entries(v.outcomes || {}).map(([k2, d]) =>
+            `<b>${esc(k2)}</b> — ${esc(d)}`).join('<br>')}</div>
+        ${(v.recent || []).length ? jsonBlock(v.recent) : ''}`;
+    } catch (e) { root.querySelector('#f-verdicts').textContent = e.message; }
+  };
+  root.querySelector('#f-v-refresh').onclick = verdicts;
+  verdicts();
+
+  try {
+    const b = await apiClient.get('/api/v1/backup');
+    root.querySelector('#f-backup').innerHTML = (b.kinds || []).map((k) => `
+      <div class="field-row" style="margin:4px 0">
+        <div style="flex:1"><span class="mono">${esc(k.kind)}</span>
+          <div class="small faint">${esc(k.contains || '')}</div></div>
+        <a class="btn btn-sm" href="${apiClient.base}/api/v1/backup/${encodeURIComponent(k.kind)}"
+           download>Download</a>
+      </div>`).join('')
+      + `<div class="small faint" style="margin-top:8px">${esc(j(b.point_tables || {}))}</div>`;
+  } catch (e) { root.querySelector('#f-backup').textContent = e.message; }
+
+  const cfOut = root.querySelector('#cf-out');
+  root.querySelector('#cf-list').onclick = async () => {
+    const p = root.querySelector('#cf-path').value.trim();
+    cfOut.innerHTML = '<div class="small dim">listing…</div>';
+    try {
+      const r = await apiClient.get(`/api/v1/controller/files?path=${encodeURIComponent(p)}`);
+      cfOut.innerHTML = jsonBlock(r);
+    } catch (e) {
+      cfOut.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+  root.querySelector('#cf-read').onclick = async () => {
+    const p = root.querySelector('#cf-path').value.trim();
+    cfOut.innerHTML = '<div class="small dim">reading…</div>';
+    try {
+      const r = await apiClient.get(
+        `/api/v1/controller/files/download?path=${encodeURIComponent(p)}`);
+      cfOut.innerHTML = jsonBlock(r);
+    } catch (e) {
+      cfOut.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+
+  root.querySelector('#f-ver-go').onclick = async () => {
+    const n = root.querySelector('#f-ver-name').value.trim();
+    const out = root.querySelector('#f-ver-out');
+    if (!n) return;
+    try {
+      const r = await apiClient.get(`/api/v1/files/lua/${encodeURIComponent(n)}/versions`);
+      out.innerHTML = jsonBlock(r);
+    } catch (e) {
+      out.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+}
+
+// --- System --------------------------------------------------------------
+
+async function system(root, apiClient, log, toast) {
+  root.innerHTML = `
+    <div class="grid cols-3">
+      ${card('Health', '<div id="sy-health" class="small dim">loading…</div>',
+        '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="sy-refresh">refresh</button>')}
+      ${card('Boot / recovery', '<div id="sy-recovery" class="small dim">loading…</div>')}
+      ${card('Versions', '<div id="sy-version" class="small dim">loading…</div>')}
+      ${card('Controller services', '<div id="sy-services" class="small dim">loading…</div>')}
+      ${card('Processes (qconn)', '<div id="sy-proc" class="small dim">loading…</div>')}
+      ${card('qconn probe', '<div id="sy-qconn" class="small dim">loading…</div>')}
+      <div class="card" style="grid-column:1/-1">
+        <h2>Controller shell
+          <span class="spacer"></span>
+          <span class="small faint">QNX shell over the unauthenticated qconn service</span></h2>
+        <div class="banner danger" style="margin-bottom:10px">
+          <svg viewBox="0 0 17 17"><use href="#i-fault"/></svg>
+          <span class="small">Runs as root on the controller. FWS gates this
+            with its own auth, lock and audit — the daemon itself has none.</span>
+        </div>
+        <div class="field-row" style="margin-top:0">
+          <input id="sh-cmd" placeholder="uname -a" style="flex:1" class="mono">
+          <button class="btn btn-sm" id="sh-run" data-cmd="1">Run</button>
+        </div>
+        <div id="sh-out" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
+        <h2>Controller lifecycle</h2>
+        <div class="banner danger" style="margin-bottom:10px">
+          <svg viewBox="0 0 17 17"><use href="#i-fault"/></svg>
+          <span class="small">These interrupt the controller. Shutdown is
+            ONE-WAY on this hardware — the vendor API has no remote power-on.</span>
+        </div>
+        <div class="row">
+          <button class="btn" id="sy-restart" data-cmd="1">Restart app</button>
+          <button class="btn" id="sy-reboot" data-cmd="1">Reboot</button>
+          <button class="btn btn-danger" id="sy-shutdown" data-cmd="1">Shutdown</button>
+        </div>
+        <div id="sy-out" style="margin-top:10px"></div>
+      </div>
+    </div>`;
+
+  const health = async () => {
+    try {
+      const h = await apiClient.health();
+      const warn = (h.warnings || []).map((w) =>
+        `<div class="banner warn" style="margin-bottom:6px"><span class="small">${esc(w)}</span></div>`).join('');
+      root.querySelector('#sy-health').innerHTML = warn + jsonBlock(h);
+    } catch (e) { root.querySelector('#sy-health').textContent = e.message; }
+  };
+  root.querySelector('#sy-refresh').onclick = health;
+  health();
+
+  const load = async (path, id, render) => {
+    try {
+      const r = await apiClient.get(path);
+      root.querySelector(id).innerHTML = render ? render(r) : jsonBlock(r);
+    } catch (e) {
+      root.querySelector(id).innerHTML =
+        `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+
+  load('/api/v1/system/recovery', '#sy-recovery', (r) => `
+    <dl class="kv"><dt>ready</dt><dd>${r.ready ? 'yes' : 'no'}</dd>
+    <dt>stage</dt><dd>${esc(r.stage || '—')}</dd></dl>
+    ${Object.entries(r.layers || {}).map(([name, l]) => `
+      <div style="margin-top:8px"><span class="tag ${l.up ? 'ok' : 'bad'}">${esc(name)}</span>
+      <div class="small faint">${esc(l.describes || '')}</div>
+      <div class="mono small dim">${Object.entries(l.ports || {})
+        .map(([p, up]) => `${p}:${up ? '↑' : '↓'}`).join('  ')}</div></div>`).join('')}`);
+  load('/api/v1/system/version', '#sy-version');
+  load('/api/v1/controller/services', '#sy-services', (r) => `
+    ${Object.entries(r.enabled || {}).map(([k, v]) =>
+      `<span class="tag ${v ? 'ok' : ''}">${esc(k)} ${v ? 'on' : 'off'}</span> `).join('')}
+    <div class="small faint" style="margin-top:8px">${esc(r.note || '')}</div>`);
+  load('/api/v1/controller/processes', '#sy-proc');
+  load('/api/v1/controller/qconn', '#sy-qconn');
+
+  root.querySelector('#sh-run').onclick = async () => {
+    const cmd = root.querySelector('#sh-cmd').value.trim();
+    const out = root.querySelector('#sh-out');
+    if (!cmd) return;
+    out.innerHTML = '<div class="small dim">running…</div>';
+    try {
+      const r = await apiClient.post('/api/v1/controller/shell',
+        { command: cmd, confirm: true });
+      out.innerHTML = jsonBlock(r);
+      log(`shell: ${cmd}`, 'warn');
+    } catch (e) {
+      out.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+
+  const lifecycle = (id, path, label, confirmText) => {
+    root.querySelector(id).onclick = async () => {
+      if (!confirm(confirmText)) return;
+      const out = root.querySelector('#sy-out');
+      try {
+        const r = await apiClient.post(path, { confirm: true });
+        out.innerHTML = `<span class="tag ok">ok</span>${jsonBlock(r)}`;
+        log(label, 'warn');
+      } catch (e) {
+        out.innerHTML = `<span class="tag bad">${e instanceof ApiError ? e.status : 'ERR'}</span>`
+          + jsonBlock(e instanceof ApiError ? e.body : { detail: e.message });
+        fail(log, toast, `${label}: ${e.message}`);
+      }
+    };
+  };
+  lifecycle('#sy-restart', '/api/v1/controller/restart', 'restart controller app',
+    'Restart the controller application? Motion stops.');
+  lifecycle('#sy-reboot', '/api/v1/controller/reboot', 'reboot controller',
+    'Reboot the controller? It will be unreachable for ~30 s.');
+  lifecycle('#sy-shutdown', '/api/v1/system/shutdown', 'SHUTDOWN controller',
+    'SHUT DOWN the controller?\n\nThis is ONE-WAY: there is no remote power-on. '
+    + 'Someone must physically restore power.');
+
+  document.dispatchEvent(new CustomEvent('fws-sync'));
+}
+
+// --- Robot configuration -------------------------------------------------
+
+async function config(root, apiClient, log, toast) {
+  root.innerHTML = `
+    <div class="grid cols-3">
+      ${card('Robot state', '<div id="cf-state" class="small dim">loading…</div>',
+        '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="cf-reload">refresh</button>')}
+      ${card('Velocity', '<div id="cf-vel" class="small dim">loading…</div>')}
+      ${card('Flange pose', '<div id="cf-flange" class="small dim">loading…</div>')}
+      ${card('Active frames', '<div id="cf-active" class="small dim">loading…</div>')}
+      ${card('Joint torques', '<div id="cf-torque" class="small dim">loading…</div>')}
+      ${card('Tool frames', '<div id="cf-tool" class="small dim">loading…</div>')}
+      ${card('Work frames', '<div id="cf-work" class="small dim">loading…</div>')}
+      ${card('Gripper', '<div id="cf-grip" class="small dim">loading…</div>')}
+      <div class="card">
+        <h2>Payload</h2>
+        <div id="cf-payload" class="small dim" style="margin-bottom:10px">loading…</div>
+        <div class="field-row" style="margin-top:0">
+          <label>mass kg</label><input id="cf-mass" type="number" step="0.01" style="width:90px">
+          <label>slot</label><input id="cf-slot" type="number" value="0" style="width:60px">
+          <button class="btn btn-sm" id="cf-payload-set" data-cmd="1">Set</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Global speed</h2>
+        <div class="field-row" style="margin-top:0">
+          <label>percent</label>
+          <input id="cf-speed" type="number" min="1" max="100" value="30" style="width:80px">
+          <button class="btn btn-sm" id="cf-speed-set" data-cmd="1">Set</button>
+        </div>
+        <div class="small faint" style="margin-top:8px">
+          Applies to program motion; jogging uses its own velocity.</div>
+      </div>
+      <div class="card">
+        <h2>Motion queue</h2>
+        <div id="cf-queue" class="small dim">loading…</div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn btn-sm" id="cf-preview">Preview jog (IK pre-flight)</button>
+        </div>
+        <div id="cf-preview-out" style="margin-top:8px"></div>
+      </div>
+      <div class="card" style="grid-column:1/-1">
+        <h2>Point tables <span class="spacer"></span>
+          <span class="small faint">taught positions on the controller</span></h2>
+        <div class="field-row" style="margin-top:0">
+          <input id="cf-pt-name" placeholder="table name" style="flex:1">
+          <button class="btn btn-sm" id="cf-pt-get">Read</button>
+          <button class="btn btn-sm" id="cf-pt-switch" data-cmd="1">Switch to</button>
+        </div>
+        <div id="cf-pt-out" style="margin-top:8px"></div>
+      </div>
+    </div>`;
+
+  const load = async (path, id, render) => {
+    try {
+      const r = await apiClient.get(path);
+      root.querySelector(id).innerHTML = render ? render(r) : jsonBlock(r);
+      return r;
+    } catch (e) {
+      root.querySelector(id).innerHTML =
+        `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+      return null;
+    }
+  };
+
+  const reload = async () => {
+    load('/api/v1/robot/state', '#cf-state');
+    load('/api/v1/robot/velocity', '#cf-vel');
+    load('/api/v1/robot/pose/flange', '#cf-flange', (r) => `
+      <div class="mono small">${(r.flange || []).map((v) => v.toFixed(3)).join('  ')}</div>
+      <div class="small faint" style="margin-top:6px">${esc(r.note || '')}</div>`);
+    load('/api/v1/robot/frames/active', '#cf-active', (r) => `
+      <dl class="kv"><dt>tool</dt><dd>${r.tool ?? '—'}</dd>
+      <dt>work</dt><dd>${r.work ?? '—'}</dd></dl>`);
+    load('/api/v1/sensors/joint_torques', '#cf-torque', (r) => `
+      <dl class="kv">${Object.entries(r.joint_torque_nm || {})
+        .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v} Nm</dd>`).join('')}</dl>
+      <div class="small faint" style="margin-top:6px">${esc(r.source || '')}</div>`);
+    load('/api/v1/frames/tool', '#cf-tool');
+    load('/api/v1/frames/work', '#cf-work');
+    load('/api/v1/gripper', '#cf-grip', (r) => `
+      <dl class="kv">${['position', 'speed', 'current', 'voltage', 'temperature']
+        .map((k) => `<dt>${k}</dt><dd>${r[k]?.value ?? '—'}</dd>`).join('')}
+      <dt>fitted</dt><dd>${r.fitted ? 'yes' : 'no'}</dd></dl>
+      <div class="small faint" style="margin-top:6px">${esc(r.note || '')}</div>`);
+    load('/api/v1/motion/queue', '#cf-queue', (r) => `
+      <dl class="kv"><dt>queued</dt><dd>${r.queued}</dd>
+      <dt>motion done</dt><dd>${r.motion_done ? 'yes' : 'no'}</dd></dl>`);
+    const p = await load('/api/v1/robot/payload', '#cf-payload', (r) => `
+      <dl class="kv"><dt>mass</dt><dd>${r.mass_kg} kg</dd>
+      <dt>cog mm</dt><dd class="mono small">${(r.cog_mm || []).join(', ')}</dd></dl>`);
+    if (p) root.querySelector('#cf-mass').value = p.mass_kg;
+  };
+  root.querySelector('#cf-reload').onclick = reload;
+  reload();
+
+  root.querySelector('#cf-payload-set').onclick = () =>
+    apiClient.put('/api/v1/robot/payload', {
+      mass_kg: parseFloat(root.querySelector('#cf-mass').value),
+      load_num: parseInt(root.querySelector('#cf-slot').value, 10) || 0,
+    }).then(() => { log('payload set', 'ok'); reload(); },
+            (e) => fail(log, toast, `payload: ${e.message}`));
+
+  root.querySelector('#cf-speed-set').onclick = () =>
+    apiClient.put('/api/v1/robot/speed', {
+      percent: parseFloat(root.querySelector('#cf-speed').value),
+    }).then(() => log('global speed set', 'ok'),
+            (e) => fail(log, toast, `speed: ${e.message}`));
+
+  root.querySelector('#cf-preview').onclick = async () => {
+    const out = root.querySelector('#cf-preview-out');
+    try {
+      const r = await apiClient.post('/api/v1/motion/preview',
+        [{ joint: 1, direction: 1, step: 5, vel: 10 }]);
+      out.innerHTML = jsonBlock(r);
+    } catch (e) {
+      out.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+
+  const ptOut = root.querySelector('#cf-pt-out');
+  root.querySelector('#cf-pt-get').onclick = async () => {
+    const n = root.querySelector('#cf-pt-name').value.trim();
+    if (!n) return;
+    try {
+      ptOut.innerHTML = jsonBlock(
+        await apiClient.get(`/api/v1/points/tables/${encodeURIComponent(n)}`));
+    } catch (e) {
+      ptOut.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+    }
+  };
+  root.querySelector('#cf-pt-switch').onclick = async () => {
+    const n = root.querySelector('#cf-pt-name').value.trim();
+    if (!n || !confirm(`Switch the active point table to ${n}?`)) return;
+    try {
+      ptOut.innerHTML = jsonBlock(await apiClient.post(
+        `/api/v1/points/tables/${encodeURIComponent(n)}/switch`, { confirm: true }));
+      log(`switched point table to ${n}`, 'ok');
+    } catch (e) { fail(log, toast, `switch table: ${e.message}`); }
+  };
+
+  document.dispatchEvent(new CustomEvent('fws-sync'));
+}
+
+export const DEV_PANELS = { api, commands, lua, files, system, config };

@@ -39,6 +39,12 @@
     <g id="i-eye"><path d="M1.8 8.5S4.3 4.2 8.5 4.2s6.7 4.3 6.7 4.3-2.5 4.3-6.7 4.3S1.8 8.5 1.8 8.5Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8.5" cy="8.5" r="2" fill="currentColor"/></g>
     <g id="i-key"><circle cx="5.8" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 8.5h5.4M12 8.5v2.6M14.4 8.5v1.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></g>
     <g id="i-upload"><path d="M8.5 11V3.6M5.4 6.4l3.1-3 3.1 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 13.6h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></g>
+    <g id="i-api"><path d="M6.2 4 3 8.5 6.2 13M10.8 4 14 8.5 10.8 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-cmd"><rect x="2.4" y="3.4" width="12.2" height="10.2" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5 7l2 1.6L5 10.2M8.6 10.8h3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-lua"><circle cx="8.5" cy="8.5" r="5.6" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="11" cy="6" r="1.5" fill="currentColor"/></g>
+    <g id="i-files"><path d="M2.8 5.2a1.4 1.4 0 0 1 1.4-1.4h2.6l1.4 1.6h4.6a1.4 1.4 0 0 1 1.4 1.4v5.6a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></g>
+    <g id="i-system"><rect x="3" y="3" width="11" height="11" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="6" y="6" width="5" height="5" rx="1" fill="currentColor"/><path d="M8.5 1.6v1.4M8.5 14v1.4M1.6 8.5h1.4M14 8.5h1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></g>
+    <g id="i-config"><path d="M8.5 2.6v2M8.5 12.4v2M2.6 8.5h2M12.4 8.5h2M4.3 4.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 4.3l-1.4 1.4M5.7 11.3l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8.5" cy="8.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
     <g id="i-inbox"><path d="M2.8 9.5 4.6 3.8h7.8l1.8 5.7v3.7H2.8Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M2.8 9.5h3.4a2.3 2.3 0 0 0 4.6 0h3.4" fill="none" stroke="currentColor" stroke-width="1.4"/></g>
   </defs>
 </svg>
@@ -79,6 +85,8 @@
     <!-- Operate: a fixed instrument panel â€” stage, controls, deck -------- -->
     <section data-tab="operate" class="cockpit">
       <div class="zone stage-zone">
+        <canvas id="view-back" aria-hidden="true"></canvas>
+        <canvas id="view-gl" aria-hidden="true"></canvas>
         <canvas id="view" aria-label="3D robot view" role="img"></canvas>
         <div id="stage-scrim" hidden></div>
         <div class="stage-overlay">
@@ -189,6 +197,12 @@
     </section>
 
     <section data-tab="faults" hidden></section>
+    <section data-tab="config" hidden></section>
+    <section data-tab="commands" hidden></section>
+    <section data-tab="lua" hidden></section>
+    <section data-tab="api" hidden></section>
+    <section data-tab="files" hidden></section>
+    <section data-tab="system" hidden></section>
     <section data-tab="programs" hidden></section>
     <section data-tab="io" hidden></section>
     <section data-tab="force" hidden></section>
@@ -202,21 +216,21 @@
 <script type="module" src="js/main.js"></script>
 </body>
 </html>
-cf3l8      j}<j}<IÏóo       E    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/ peer-ip-address 127.0.0.1 peer-port 8000 strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
-date: Thu, 13 Aug 2026 01:05:00 GMT
+•tœ¥`s      j}uj}uIÏ÷¿       E    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/ peer-ip-address 127.0.0.1 peer-port 8000 strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
+date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/html; charset=utf-8
 accept-ranges: bytes
-content-length: 12081
-last-modified: Thu, 13 Aug 2026 00:34:07 GMT
-etag: "b2e2521c90dddf8d090b2c6a438a2022"
+content-length: 13948
+last-modified: Thu, 13 Aug 2026 01:29:33 GMT
+etag: "c2d28c7c5d9af7f565dfb8a479d8e0b9"
 cache-control: no-cache
- original-response-headers date: Thu, 13 Aug 2026 01:05:00 GMT
+ original-response-headers date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/html; charset=utf-8
 accept-ranges: bytes
-content-length: 12081
-last-modified: Thu, 13 Aug 2026 00:34:07 GMT
-etag: "b2e2521c90dddf8d090b2c6a438a2022"
+content-length: 13948
+last-modified: Thu, 13 Aug 2026 01:29:33 GMT
+etag: "c2d28c7c5d9af7f565dfb8a479d8e0b9"
 cache-control: no-cache
- ctid 1 net-response-time-onstart 50 net-response-time-onstop 81   /1
+ ctid 1 net-response-time-onstart 49 net-response-time-onstop 90   6|

@@ -5,6 +5,7 @@ import { Stream } from './stream.js';
 import { View3D } from './view3d.js';
 import { MODELS, agreement, modelFor, verdict } from './kin.js';
 import { PANELS } from './panels.js';
+import { DEV_PANELS } from './devpanels.js';
 import { invalidateChartTheme, SharedScale, Spark } from './charts.js';
 
 const api = new Api('');            // same origin: the gateway serves this page
@@ -38,6 +39,7 @@ function applyTheme(pref) {
   try { localStorage.setItem('fws-theme', pref); } catch { /* private mode */ }
   invalidateChartTheme();
   view.invalidateTheme();
+  view.syncTheme?.();
   const label = $('theme-label');
   if (label) label.textContent = pref;
 }
@@ -567,15 +569,25 @@ function renderStreamHealth(f) {
 
 /* ---------------------------------------------------------------- tabs */
 
+// Operator tabs first, then the developer surface; the rail draws a
+// divider between the two groups.
 const TABS = [
   ['operate', 'Operate', 'i-operate'],
   ['faults', 'Faults', 'i-fault'],
   ['programs', 'Programs', 'i-program'],
   ['io', 'I/O', 'i-io'],
   ['force', 'Force', 'i-force'],
+  ['config', 'Config', 'i-config', 'dev'],
+  ['commands', 'Commands', 'i-cmd'],
+  ['lua', 'Lua', 'i-lua'],
+  ['api', 'API', 'i-api'],
+  ['files', 'Files', 'i-files'],
+  ['system', 'System', 'i-system'],
   ['capabilities', 'Capabilities', 'i-caps'],
   ['audit', 'Audit', 'i-audit'],
 ];
+
+const ALL_PANELS = { ...PANELS, ...DEV_PANELS };
 
 const loaded = new Set(['operate']);
 let currentTab = null;
@@ -597,12 +609,12 @@ function selectTab(id, push = true) {
     renderQueued = true;
     requestAnimationFrame(renderTick);
   }
-  if (!loaded.has(id) && PANELS[id]) {
+  if (!loaded.has(id) && ALL_PANELS[id]) {
     loaded.add(id);
-    PANELS[id](document.querySelector(`section[data-tab="${id}"]`), api, log, toast);
+    ALL_PANELS[id](document.querySelector(`section[data-tab="${id}"]`), api, log, toast);
     syncControls();   // panel buttons carry data-cmd; gate them immediately
-  } else if (PANELS[id] && PANELS[id].refresh) {
-    PANELS[id].refresh();
+  } else if (ALL_PANELS[id] && ALL_PANELS[id].refresh) {
+    ALL_PANELS[id].refresh();
   }
 }
 
@@ -610,7 +622,13 @@ window.addEventListener('hashchange', () => selectTab(location.hash.slice(1), fa
 
 function buildTabs() {
   const nav = $('tabs');
-  for (const [id, label, icon] of TABS) {
+  for (const [id, label, icon, group] of TABS) {
+    if (group === 'dev') {
+      const sep = document.createElement('div');
+      sep.className = 'rail-sep';
+      sep.textContent = 'Developer';
+      nav.append(sep);
+    }
     const b = document.createElement('button');
     b.innerHTML = `<svg viewBox="0 0 17 17"><use href="#${icon}"/></svg>${label}`;
     b.dataset.tab = id;
@@ -716,25 +734,29 @@ async function boot() {
   // TTL, which is exactly the failure mode the gateway watchdog handles.
 }
 
+// Panels rebuild rows after their own fetches; they raise this when their
+// commanding controls need gating against the current lease.
+document.addEventListener('fws-sync', () => syncControls());
+
 boot();
 
 // Debug handle for driving the console from automation; not a public API.
 window.fwsDebug = { view, lease, get model() { return model; } };
-ÏF—õ´š      j}<j}<IÏóo       O    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/main.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
-date: Thu, 13 Aug 2026 01:05:00 GMT
+Ö‹Ü•û      j}uj}uIÏ÷¿       O    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/main.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
+date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
-content-length: 25677
-last-modified: Thu, 13 Aug 2026 00:35:16 GMT
-etag: "fe9431cff4c28afc8d814a199892ad2b"
+content-length: 26503
+last-modified: Thu, 13 Aug 2026 01:29:33 GMT
+etag: "e391a1b4fff1232ec4932e2e424e1d61"
 cache-control: no-cache
- original-response-headers date: Thu, 13 Aug 2026 01:05:00 GMT
+ original-response-headers date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
-content-length: 25677
-last-modified: Thu, 13 Aug 2026 00:35:16 GMT
-etag: "fe9431cff4c28afc8d814a199892ad2b"
+content-length: 26503
+last-modified: Thu, 13 Aug 2026 01:29:33 GMT
+etag: "e391a1b4fff1232ec4932e2e424e1d61"
 cache-control: no-cache
- ctid 2 net-response-time-onstart 30 net-response-time-onstop 34   dM
+ ctid 2 net-response-time-onstart 28 net-response-time-onstop 34   g‡

@@ -415,8 +415,8 @@ async function audit(root, api, log, toast) {
 }
 
 export const PANELS = { faults, programs, io, force, capabilities, audit };
-ÿª¿@*      j}=j}=IÏóo       Q    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/panels.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
-date: Thu, 13 Aug 2026 01:05:00 GMT
+ÕŽ›@*      j}uj}uIÏ÷¿       Q    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/js/panels.js strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
+date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
@@ -424,7 +424,7 @@ content-length: 18949
 last-modified: Wed, 12 Aug 2026 02:24:26 GMT
 etag: "23451f368ab104c4cc1de0b8b56a54b0"
 cache-control: no-cache
- original-response-headers date: Thu, 13 Aug 2026 01:05:00 GMT
+ original-response-headers date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/javascript; charset=utf-8
 accept-ranges: bytes
@@ -432,4 +432,4 @@ content-length: 18949
 last-modified: Wed, 12 Aug 2026 02:24:26 GMT
 etag: "23451f368ab104c4cc1de0b8b56a54b0"
 cache-control: no-cache
- ctid 2 net-response-time-onstart 35 net-response-time-onstop 39   J
+ ctid 2 net-response-time-onstart 32 net-response-time-onstop 37   J

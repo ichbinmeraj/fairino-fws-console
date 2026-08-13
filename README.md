@@ -45,15 +45,34 @@ ssh -L 8000:localhost:8000 user@<gateway-host>
 
 ## What the panels show
 
+### Operator panels
+
 | Panel | What it binds to |
 |---|---|
 | **Operate** | 10 Hz WebSocket telemetry, 3D arm view, joint/Cartesian jog, per-joint limit headroom |
 | **Faults** | live fault state, searchable error-code table with the gateway's own caveat about firmware versions |
-| **Programs** | upload with md5 verification, select, run/pause/resume/stop — with the gateway's confirmation flow for unbounded motion |
-| **I/O** | digital and analog, read on demand |
-| **Force** | wrist force/torque, sensor config, zeroing |
-| **Capabilities** | the controller's available / absent / unknown feature matrix |
+| **Programs** | upload with md5 verification, load, select, validate against the controller's own Lua compiler, run/pause/resume/stop |
+| **I/O** | digital, tool digital and analog, read on demand |
+| **Force** | wrist force/torque, sensor config, zeroing, activation, and the strategy boundary |
+| **Capabilities** | the controller's available / absent / unknown feature matrix, with re-probe |
 | **Audit** | who commanded what, when |
+
+### Developer panels
+
+The gateway exposes 100 operations across 22 domains; the console reaches
+all of them.
+
+| Panel | What it gives you |
+|---|---|
+| **Config** | robot state, velocity, flange pose, tool and work frames, active frames, joint torques, gripper, payload, global speed, motion queue, IK pre-flight, point tables |
+| **Commands** | the 594-command wire registry — filter by danger class and kind, read each command's wire arguments, arity, evidence basis and hazards, and invoke it with the policy matrix beside you |
+| **Lua** | the 282-function controller catalogue, manual sections, the RPC↔Lua bridge, the argument-order conflicts, what this firmware is missing, and a box that compiles a snippet on the controller itself |
+| **API** | every operation, **generated from the gateway's own `/openapi.json`** — filter, fill parameters, edit a JSON body built from the schema, send, read the response with timing, or copy the request as `curl` |
+| **Files** | file kinds and their limits, controller filesystem browse/read, Lua compile verdicts, program version history, backup downloads |
+| **System** | health warnings, boot/recovery layers with port state, versions, controller services, processes, qconn, the controller shell, and the guarded restart / reboot / shutdown paths |
+
+The API panel is generated, not hand-written: an endpoint added to a future
+gateway release appears in this console without a change here.
 
 ### The 3D view does not guess silently
 

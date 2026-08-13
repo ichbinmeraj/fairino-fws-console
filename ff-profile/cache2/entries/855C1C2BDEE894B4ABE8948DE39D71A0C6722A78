@@ -80,6 +80,9 @@
 /* ---------------------------------------------------------------- base */
 
 * { box-sizing: border-box; }
+/* A class with an explicit `display` outranks the UA rule for [hidden] â€”
+   .cockpit is display:grid, so tab switching needs this to actually hide. */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -437,13 +440,15 @@ tbody tr:last-child td { border-bottom: none; }
 /* ---------------------------------------------------------------- stage */
 
 .stage-card { position: relative; padding: 0; overflow: hidden; }
-#view {
+#view-back, #view-gl, #view {
   position: absolute; inset: 0; width: 100%; height: 100%; display: block;
-  touch-action: none; cursor: grab;
+}
+#view-back {
   background:
     radial-gradient(ellipse at 50% 62%, var(--accent-bg) 0%, transparent 55%),
     var(--bg);
 }
+#view { touch-action: none; cursor: grab; }
 #view:active { cursor: grabbing; }
 
 .stage-overlay {
@@ -662,6 +667,60 @@ body[data-stream]:not([data-stream="live"]) #tbl-tcp {
 }
 .readout-row.dim { color: var(--dim); }
 
+/* ------------------------------------------------------- developer panels */
+
+nav.rail .rail-sep {
+  margin: 12px 12px 4px; font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint);
+  border-top: 1px solid var(--line); padding-top: 10px;
+}
+
+/* operation / command / function rows in the browse lists */
+.api-op {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 5px 8px; margin-bottom: 2px;
+  border: 1px solid transparent; border-radius: 6px;
+  background: none; color: var(--dim); cursor: pointer;
+  font-size: 12.5px; text-align: left;
+  transition: background var(--speed), color var(--speed);
+}
+.api-op:hover { background: var(--hover); color: var(--text); }
+.api-op.sel { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+.api-op .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.verb {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+  padding: 2px 5px; border-radius: 4px; min-width: 42px; text-align: center;
+  background: var(--raised); color: var(--dim); flex: none;
+}
+.v-get { color: var(--ok); }
+.v-post { color: var(--accent); }
+.v-put { color: var(--warn); }
+.v-delete { color: var(--danger); }
+.v-patch { color: var(--warn); }
+
+.jsonview {
+  margin: 8px 0 0; padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  color: var(--dim); max-height: 420px; overflow: auto;
+  white-space: pre; tab-size: 2;
+}
+
+textarea {
+  background: var(--bg); border: 1px solid var(--line-2);
+  border-radius: var(--r-s); color: var(--text);
+  font-family: var(--mono); font-size: 12px; padding: 8px 10px;
+  resize: vertical;
+}
+textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
+select {
+  height: 30px; padding: 0 8px; background: var(--bg);
+  border: 1px solid var(--line-2); border-radius: var(--r-s);
+  font-size: 12.5px;
+}
+
 /* ---------------------------------------------------------------- misc */
 
 .empty {
@@ -732,21 +791,21 @@ body[data-stream]:not([data-stream="live"]) #tbl-tcp {
   padding: 6px 12px; overflow-x: auto;
   background: var(--surface); border-bottom: 1px solid var(--line);
 }
-s¾˜C¢X      j}<j}<IÏóo       P    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/css/app.css strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
-date: Thu, 13 Aug 2026 01:05:00 GMT
+ÆÄƒøq      j}uj}uIÏ÷¿       P    O^partitionKey=%28http%2Clocalhost%29,:http://localhost:8000/console/css/app.css strongly-framed 1 request-method GET response-head HTTP/1.1 200 OK
+date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/css; charset=utf-8
 accept-ranges: bytes
-content-length: 25672
-last-modified: Thu, 13 Aug 2026 00:29:58 GMT
-etag: "2220978e1b24dcde480d898425c25e54"
+content-length: 27925
+last-modified: Thu, 13 Aug 2026 01:31:11 GMT
+etag: "55b233dfb3fdcb7601de6738bcf2ad3f"
 cache-control: no-cache
- original-response-headers date: Thu, 13 Aug 2026 01:05:00 GMT
+ original-response-headers date: Thu, 13 Aug 2026 01:31:32 GMT
 server: uvicorn
 content-type: text/css; charset=utf-8
 accept-ranges: bytes
-content-length: 25672
-last-modified: Thu, 13 Aug 2026 00:29:58 GMT
-etag: "2220978e1b24dcde480d898425c25e54"
+content-length: 27925
+last-modified: Thu, 13 Aug 2026 01:31:11 GMT
+etag: "55b233dfb3fdcb7601de6738bcf2ad3f"
 cache-control: no-cache
- ctid 5 net-response-time-onstart 30 net-response-time-onstop 33   dH
+ ctid 5 net-response-time-onstart 29 net-response-time-onstop 36   m

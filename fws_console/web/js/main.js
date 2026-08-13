@@ -5,6 +5,7 @@ import { Stream } from './stream.js';
 import { View3D } from './view3d.js';
 import { MODELS, agreement, modelFor, verdict } from './kin.js';
 import { PANELS } from './panels.js';
+import { DEV_PANELS } from './devpanels.js';
 import { invalidateChartTheme, SharedScale, Spark } from './charts.js';
 
 const api = new Api('');            // same origin: the gateway serves this page
@@ -568,15 +569,25 @@ function renderStreamHealth(f) {
 
 /* ---------------------------------------------------------------- tabs */
 
+// Operator tabs first, then the developer surface; the rail draws a
+// divider between the two groups.
 const TABS = [
   ['operate', 'Operate', 'i-operate'],
   ['faults', 'Faults', 'i-fault'],
   ['programs', 'Programs', 'i-program'],
   ['io', 'I/O', 'i-io'],
   ['force', 'Force', 'i-force'],
+  ['config', 'Config', 'i-config', 'dev'],
+  ['commands', 'Commands', 'i-cmd'],
+  ['lua', 'Lua', 'i-lua'],
+  ['api', 'API', 'i-api'],
+  ['files', 'Files', 'i-files'],
+  ['system', 'System', 'i-system'],
   ['capabilities', 'Capabilities', 'i-caps'],
   ['audit', 'Audit', 'i-audit'],
 ];
+
+const ALL_PANELS = { ...PANELS, ...DEV_PANELS };
 
 const loaded = new Set(['operate']);
 let currentTab = null;
@@ -598,12 +609,12 @@ function selectTab(id, push = true) {
     renderQueued = true;
     requestAnimationFrame(renderTick);
   }
-  if (!loaded.has(id) && PANELS[id]) {
+  if (!loaded.has(id) && ALL_PANELS[id]) {
     loaded.add(id);
-    PANELS[id](document.querySelector(`section[data-tab="${id}"]`), api, log, toast);
+    ALL_PANELS[id](document.querySelector(`section[data-tab="${id}"]`), api, log, toast);
     syncControls();   // panel buttons carry data-cmd; gate them immediately
-  } else if (PANELS[id] && PANELS[id].refresh) {
-    PANELS[id].refresh();
+  } else if (ALL_PANELS[id] && ALL_PANELS[id].refresh) {
+    ALL_PANELS[id].refresh();
   }
 }
 
@@ -611,7 +622,13 @@ window.addEventListener('hashchange', () => selectTab(location.hash.slice(1), fa
 
 function buildTabs() {
   const nav = $('tabs');
-  for (const [id, label, icon] of TABS) {
+  for (const [id, label, icon, group] of TABS) {
+    if (group === 'dev') {
+      const sep = document.createElement('div');
+      sep.className = 'rail-sep';
+      sep.textContent = 'Developer';
+      nav.append(sep);
+    }
     const b = document.createElement('button');
     b.innerHTML = `<svg viewBox="0 0 17 17"><use href="#${icon}"/></svg>${label}`;
     b.dataset.tab = id;
@@ -716,6 +733,10 @@ async function boot() {
   // and a closed tab simply stops heartbeating — the lease lapses within its
   // TTL, which is exactly the failure mode the gateway watchdog handles.
 }
+
+// Panels rebuild rows after their own fetches; they raise this when their
+// commanding controls need gating against the current lease.
+document.addEventListener('fws-sync', () => syncControls());
 
 boot();
 

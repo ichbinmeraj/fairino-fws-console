@@ -102,6 +102,7 @@ async function programs(root, api, log, toast) {
           <th>md5</th><th style="text-align:right"></th></tr></thead>
           <tbody id="prog-rows"></tbody></table></div>
         <div class="small faint" id="prog-note" style="margin-top:10px"></div>
+        <div id="prog-validate" style="margin-top:10px"></div>
       </div>
       <div class="card">
         <h2>Execution</h2>
@@ -132,7 +133,9 @@ async function programs(root, api, log, toast) {
         <tr><td style="text-align:left" class="mono">${esc(p.name)}</td>
         <td>${p.bytes}</td><td class="small faint mono">${esc((p.md5 || '').slice(0, 10))}…</td>
         <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-sm" data-cmd="1" data-load="${esc(p.name)}">load</button>
           <button class="btn btn-sm" data-cmd="1" data-sel="${esc(p.name)}">select</button>
+          <button class="btn btn-sm btn-ghost" data-val="${esc(p.name)}">validate</button>
           <button class="btn btn-sm btn-ghost" data-cmd="1" data-del="${esc(p.name)}">delete</button>
         </td></tr>`).join('')
         || `<tr><td colspan="4">${empty('i-inbox', 'none uploaded through this gateway yet')}</td></tr>`;
@@ -141,11 +144,32 @@ async function programs(root, api, log, toast) {
         b.onclick = () => api.post(`/api/v1/programs/${encodeURIComponent(b.dataset.sel)}/select`, {})
           .then(() => log(`selected ${b.dataset.sel}`, 'ok'), (e) => fail(log, toast, e.message));
       }
+      for (const b of root.querySelectorAll('[data-load]')) {
+        b.onclick = () => api.post(`/api/v1/programs/${encodeURIComponent(b.dataset.load)}/load`, {})
+          .then(() => { log(`loaded ${b.dataset.load}`, 'ok'); refresh(); },
+                (e) => fail(log, toast, e.message));
+      }
+      for (const b of root.querySelectorAll('[data-val]')) {
+        b.onclick = async () => {
+          const out = root.querySelector('#prog-validate');
+          out.innerHTML = '<div class="small dim">validating against the controller\u2019s own Lua compiler…</div>';
+          try {
+            const r = await api.post(
+              `/api/v1/programs/${encodeURIComponent(b.dataset.val)}/validate`, {});
+            out.innerHTML = `<span class="tag ${r.ok === false ? 'bad' : 'ok'}">`
+              + `${esc(b.dataset.val)}</span><pre class="jsonview">${
+                esc(JSON.stringify(r, null, 2))}</pre>`;
+          } catch (e) {
+            out.innerHTML = `<div class="banner warn"><span class="small">${esc(e.message)}</span></div>`;
+          }
+        };
+      }
       for (const b of root.querySelectorAll('[data-del]')) {
         b.onclick = () => api.del(`/api/v1/programs/${encodeURIComponent(b.dataset.del)}`)
           .then(() => { log(`deleted ${b.dataset.del}`, 'ok'); refresh(); },
                 (e) => fail(log, toast, e.message));
       }
+      document.dispatchEvent(new CustomEvent('fws-sync'));
     } catch (e) { log(`programs: ${e.message}`, 'err'); }
 
     try {
@@ -223,6 +247,8 @@ async function io(root, api, log, toast) {
         <div style="display:flex;gap:6px;flex-wrap:wrap" id="di"></div>
         <div class="small faint" style="margin-top:10px">
           read on demand — live telemetry does not include I/O</div>
+        <h2 style="margin-top:14px">Tool digital inputs</h2>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="tdi"></div>
       </div>
       ${card('Digital outputs', '<div id="do"></div>')}
       ${card('Analog', `
@@ -255,8 +281,23 @@ async function io(root, api, log, toast) {
       );
     }
   };
-  root.querySelector('#di-refresh').onclick = readInputs;
+  const tdi = root.querySelector('#tdi');
+  const readTool = () => {
+    tdi.innerHTML = '';
+    for (let i = 0; i < 4; i++) {
+      const el = document.createElement('span');
+      el.className = 'tag';
+      el.textContent = `TDI${i} …`;
+      tdi.append(el);
+      api.get(`/api/v1/io/tool/digital/inputs/${i}`).then(
+        (r) => { el.textContent = `TDI${i} ${r.value}`; el.className = `tag ${r.value ? 'ok' : ''}`; },
+        () => { el.textContent = `TDI${i} ?`; el.className = 'tag bad'; },
+      );
+    }
+  };
+  root.querySelector('#di-refresh').onclick = () => { readInputs(); readTool(); };
   readInputs();
+  readTool();
 
   // Outputs carry confirm=true: the gateway requires it because an output
   // can actuate a gripper or a tool, and here the operator's click on a
@@ -306,13 +347,21 @@ async function force(root, api, log, toast) {
       ${card('Wrist force / torque', `<table><tbody id="f-now"></tbody></table>
         <div class="small faint" id="f-what" style="margin-top:10px"></div>`)}
       ${card('Sensor', `<div class="mono" id="f-cfg">loading…</div>
-        <div style="margin-top:12px">
+        <div class="row" style="margin-top:12px">
           <button class="btn" id="f-zero" data-cmd="1">Zero sensor</button>
+          <button class="btn btn-sm" id="f-on" data-cmd="1">Activate</button>
+          <button class="btn btn-sm" id="f-off" data-cmd="1">Deactivate</button>
         </div>
         <div class="small faint" style="margin-top:10px">
           Zeroing takes the current load as the new reference. Do it with the
           tool unloaded, or the reading will lie by exactly that much.</div>`)}
       ${card('Payload', `<dl class="kv" id="f-pay">loading…</dl>`)}
+      <div class="card" style="grid-column:1/-1">
+        <h2>Force strategies
+          <span class="spacer"></span>
+          <span class="small faint">why these have no endpoint</span></h2>
+        <div id="f-strat" class="small dim">loading…</div>
+      </div>
     </div>`;
 
   const refreshFt = async () => {
@@ -342,6 +391,18 @@ async function force(root, api, log, toast) {
       `<dt>${esc(k)}</dt><dd class="mono small">${esc(JSON.stringify(v))}</dd>`).join('');
   } catch (e) { root.querySelector('#f-pay').innerHTML = `<dt>error</dt><dd>${esc(e.message)}</dd>`; }
 
+  try {
+    const st = await api.get('/api/v1/force/strategies');
+    root.querySelector('#f-strat').innerHTML =
+      `<pre class="jsonview">${esc(JSON.stringify(st, null, 2))}</pre>`;
+  } catch (e) { root.querySelector('#f-strat').textContent = e.message; }
+
+  const activate = (on) => api.post('/api/v1/force/activate', { enable: on, confirm: true })
+    .then(() => { log(`force sensor ${on ? 'activated' : 'deactivated'}`, 'ok'); refreshFt(); },
+          (e) => fail(log, toast, `activate: ${e.message}`));
+  root.querySelector('#f-on').onclick = () => activate(true);
+  root.querySelector('#f-off').onclick = () => activate(false);
+
   root.querySelector('#f-zero').onclick = () =>
     api.post('/api/v1/force/zero', {})
       .then(() => { log('force sensor zeroed', 'ok'); refreshFt(); },
@@ -353,7 +414,8 @@ async function force(root, api, log, toast) {
 async function capabilities(root, api, log, toast) {
   root.innerHTML = card('Controller capabilities',
     '<div id="cap-body" class="dim">probing…</div>',
-    '<span class="spacer"></span><span class="small dim" id="cap-sum"></span>');
+    '<span class="spacer"></span><span class="small dim" id="cap-sum"></span>'
+    + '<button class="btn btn-sm btn-ghost" id="cap-refresh" data-cmd="1">re-probe</button>');
   try {
     const c = await api.capabilities();
     root.querySelector('#cap-sum').textContent =
@@ -377,6 +439,14 @@ async function capabilities(root, api, log, toast) {
       + Object.entries(c.states)
         .map(([k, v]) => `<b>${esc(k)}</b> — ${esc(v)}`).join('<br>') + '</span>';
     root.append(note);
+    root.querySelector('#cap-refresh').onclick = async () => {
+      try {
+        await api.post('/api/v1/capabilities/refresh', {});
+        log('capabilities re-probed', 'ok');
+        capabilities(root, api, log, toast);
+      } catch (e) { fail(log, toast, `re-probe: ${e.message}`); }
+    };
+    document.dispatchEvent(new CustomEvent('fws-sync'));
   } catch (e) {
     root.querySelector('#cap-body').textContent = e.message;
     log(`capabilities: ${e.message}`, 'err');

@@ -90,3 +90,38 @@ class TestCaching:
         r = make_app().get("/")
         assert "cache-control" not in r.headers or \
             r.headers["cache-control"] != "no-cache"
+
+
+class TestDeveloperPanels:
+    """The console claims to expose the whole gateway surface. These pin the
+    two halves of that claim: the generic explorer, and the hand-built
+    panels for the surfaces where raw JSON is not the useful view."""
+
+    def test_devpanels_ship_and_are_imported(self):
+        js = WEB / "js"
+        assert (js / "devpanels.js").is_file()
+        main = (js / "main.js").read_text()
+        assert "devpanels.js" in main, "main.js does not import the dev panels"
+        for tab in ("config", "commands", "lua", "api", "files", "system"):
+            assert f"'{tab}'" in main, f"tab {tab} is not registered"
+
+    def test_the_api_explorer_is_generated_from_the_spec(self):
+        """Not a hand-listed set of endpoints: it reads /openapi.json, so a
+        route added to the gateway later shows up without a console change."""
+        src = (WEB / "js" / "devpanels.js").read_text()
+        assert "/openapi.json" in src
+        assert "spec.paths" in src
+
+    def test_every_gateway_domain_has_a_panel_reference(self):
+        """Every top-level /api/v1 domain the gateway serves is named
+        somewhere in the console, so no whole area is invisible."""
+        src = "".join((WEB / "js" / f).read_text() for f in
+                      ("panels.js", "devpanels.js", "main.js", "api.js"))
+        domains = [
+            "backup", "capabilities", "commands", "control", "controller",
+            "errors", "events", "execution", "files", "force", "frames",
+            "gripper", "invoke", "io", "lua", "motion", "points", "programs",
+            "robot", "sensors", "state", "system",
+        ]
+        missing = [d for d in domains if f"/api/v1/{d}" not in src]
+        assert not missing, f"no panel touches these domains: {missing}"
