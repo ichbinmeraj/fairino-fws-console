@@ -420,8 +420,8 @@ async function lua(root, apiClient, log, toast) {
     </div>
     <div class="grid cols-3" style="margin-top:14px">
       ${card('Catalogue', '<dl class="kv" id="lua-summary"></dl>')}
-      ${card('Firmware', '<div id="lua-firmware" class="small dim">${skeleton(3)}</div>')}
-      ${card('Manual conflicts', '<div id="lua-conflicts" class="small dim">${skeleton(3)}</div>')}
+      ${card('Firmware', `<div id="lua-firmware" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Manual conflicts', `<div id="lua-conflicts" class="small dim">${skeleton(3)}</div>`)}
       <div class="card" style="grid-column:1/-1">
         <h2>Compile a snippet
           <span class="spacer"></span>
@@ -527,7 +527,7 @@ PrintMsg('hello')"></textarea>
         for (const x of listEl.querySelectorAll('[data-fn]')) x.classList.remove('sel');
         b.classList.add('sel');
         const el = root.querySelector('#lua-detail');
-        el.innerHTML = '<h2>Function</h2><div class="small dim">${skeleton(3)}</div>';
+        el.innerHTML = `<h2>Function</h2><div class="small dim">${skeleton(3)}</div>`;
         try {
           const d = await apiClient.get(`/api/v1/lua/functions/${encodeURIComponent(b.dataset.fn)}`);
           el.innerHTML = `<h2>${esc(d.name || b.dataset.fn)}</h2>${jsonBlock(d)}`;
@@ -547,7 +547,7 @@ PrintMsg('hello')"></textarea>
 async function files(root, apiClient, log, toast) {
   root.innerHTML = `
     <div class="grid cols-3">
-      ${card('File kinds', '<div id="f-kinds" class="small dim">${skeleton(3)}</div>')}
+      ${card('File kinds', `<div id="f-kinds" class="small dim">${skeleton(3)}</div>`)}
       <div class="card" style="grid-column:span 2">
         <h2>Controller filesystem
           <span class="spacer"></span>
@@ -561,9 +561,9 @@ async function files(root, apiClient, log, toast) {
         <div id="cf-out" style="margin-top:10px"></div>
       </div>
       ${card('Lua compile verdicts',
-        '<div id="f-verdicts" class="small dim">${skeleton(3)}</div>',
+        `<div id="f-verdicts" class="small dim">${skeleton(3)}</div>`,
         '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="f-v-refresh">refresh</button>')}
-      ${card('Backups', '<div id="f-backup" class="small dim">${skeleton(3)}</div>')}
+      ${card('Backups', `<div id="f-backup" class="small dim">${skeleton(3)}</div>`)}
       ${card('Program versions', `
         <div class="field-row" style="margin-top:0">
           <input id="f-ver-name" placeholder="program.lua" style="flex:1">
@@ -656,13 +656,13 @@ async function files(root, apiClient, log, toast) {
 async function system(root, apiClient, log, toast) {
   root.innerHTML = `
     <div class="grid cols-3">
-      ${card('Health', '<div id="sy-health" class="small dim">${skeleton(3)}</div>',
+      ${card('Health', `<div id="sy-health" class="small dim">${skeleton(3)}</div>`,
         '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="sy-refresh">refresh</button>')}
-      ${card('Boot / recovery', '<div id="sy-recovery" class="small dim">${skeleton(3)}</div>')}
-      ${card('Versions', '<div id="sy-version" class="small dim">${skeleton(3)}</div>')}
-      ${card('Controller services', '<div id="sy-services" class="small dim">${skeleton(3)}</div>')}
-      ${card('Processes (qconn)', '<div id="sy-proc" class="small dim">${skeleton(3)}</div>')}
-      ${card('qconn probe', '<div id="sy-qconn" class="small dim">${skeleton(3)}</div>')}
+      ${card('Boot / recovery', `<div id="sy-recovery" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Versions', `<div id="sy-version" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Controller services', `<div id="sy-services" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Processes (qconn)', `<div id="sy-proc" class="small dim">${skeleton(3)}</div>`)}
+      ${card('qconn probe', `<div id="sy-qconn" class="small dim">${skeleton(3)}</div>`)}
       <div class="card" style="grid-column:1/-1">
         <h2>Controller shell
           <span class="spacer"></span>
@@ -784,15 +784,15 @@ async function system(root, apiClient, log, toast) {
 async function config(root, apiClient, log, toast) {
   root.innerHTML = `
     <div class="grid cols-3">
-      ${card('Robot state', '<div id="cf-state" class="small dim">${skeleton(3)}</div>',
+      ${card('Robot state', `<div id="cf-state" class="small dim">${skeleton(3)}</div>`,
         '<span class="spacer"></span><button class="btn btn-sm btn-ghost" id="cf-reload">refresh</button>')}
-      ${card('Velocity', '<div id="cf-vel" class="small dim">${skeleton(3)}</div>')}
-      ${card('Flange pose', '<div id="cf-flange" class="small dim">${skeleton(3)}</div>')}
-      ${card('Active frames', '<div id="cf-active" class="small dim">${skeleton(3)}</div>')}
-      ${card('Joint torques', '<div id="cf-torque" class="small dim">${skeleton(3)}</div>')}
-      ${card('Tool frames', '<div id="cf-tool" class="small dim">${skeleton(3)}</div>')}
-      ${card('Work frames', '<div id="cf-work" class="small dim">${skeleton(3)}</div>')}
-      ${card('Gripper', '<div id="cf-grip" class="small dim">${skeleton(3)}</div>')}
+      ${card('Velocity', `<div id="cf-vel" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Flange pose', `<div id="cf-flange" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Active frames', `<div id="cf-active" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Joint torques', `<div id="cf-torque" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Tool frames', `<div id="cf-tool" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Work frames', `<div id="cf-work" class="small dim">${skeleton(3)}</div>`)}
+      ${card('Gripper', `<div id="cf-grip" class="small dim">${skeleton(3)}</div>`)}
       <div class="card">
         <h2>Payload</h2>
         <div id="cf-payload" class="small dim" style="margin-bottom:10px">loading…</div>

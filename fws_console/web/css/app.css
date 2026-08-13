@@ -1,5 +1,11 @@
 /* FWS Console design system.
  *
+ * Text tokens are MEASURED against both grounds, not chosen by eye: every
+ * foreground below clears WCAG AA 4.5:1 on --surface and on --bg in its own
+ * theme. Dark --faint used to sit at 2.95:1 — under even the 3.0 UI-component
+ * floor — while carrying real words ("read-only", "requires the shell
+ * service"). Re-derive with the same solve if a ground changes.
+ *
  * Dark-first: this is a control-room instrument, and a dark ground keeps
  * attention on live data and the 3D stage. Tokens were designed in OKLCH
  * (even lightness steps, constant hue family) and shipped as hex so old
@@ -20,7 +26,7 @@
   --line-2: #313941;
   --text: #e5e8ec;
   --dim: #9299a1;
-  --faint: #5d646b;
+  --faint: #7c828a;
   --accent: #3f9fe8;
   --accent-2: #297ab6;
   --on-accent: #06131d;
@@ -67,12 +73,12 @@
   --line-2: #bfc5ca;
   --text: #191d22;
   --dim: #585e65;
-  --faint: #82878c;
-  --accent: #0074bf;
+  --faint: #6a6f74;
+  --accent: #0072bc;
   --accent-2: #3b93d5;
   --on-accent: #ffffff;
-  --ok: #008b4e;
-  --warn: #a87600;
+  --ok: #008043;
+  --warn: #966400;
   --danger: #c92f33;
   --on-danger: #ffffff;
   --data: #00849c;
@@ -123,6 +129,17 @@ a { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* Keyboard users otherwise tab through thirteen rail buttons to reach the
+   content. Visible only when focused, per the usual pattern. */
+.skip-link {
+  position: absolute; left: 8px; top: -100px; z-index: 300;
+  padding: 9px 14px; border-radius: var(--r-s);
+  background: var(--accent); color: var(--on-accent);
+  font-size: var(--fs-md); font-weight: 600; text-decoration: none;
+  transition: top var(--speed);
+}
+.skip-link:focus { top: 8px; }
 
 /* ---------------------------------------------------------------- shell */
 

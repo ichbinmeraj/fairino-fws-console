@@ -693,6 +693,10 @@ function selectTab(id, push = true) {
     sec.hidden = !on;
   }
   if (push && location.hash.slice(1) !== id) location.hash = id;
+  // The tab title is the browser's own label for this view — it belongs in
+  // history entries and in the window switcher, not only on screen.
+  const label = (TABS.find(([t]) => t === id) || [])[1];
+  document.title = label ? `${label} · FWS Console` : 'FWS Console';
   // Keyboard and screen-reader users must land inside the panel they chose,
   // not stay parked on the rail.
   if (push) {

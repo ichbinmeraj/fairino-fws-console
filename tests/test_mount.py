@@ -140,7 +140,8 @@ class TestInterfaceQuality:
         for f in (WEB / "js").glob("*.js"):
             if f.name == "ui.js":
                 continue          # defines the replacements, names them in docs
-            for m in re.finditer(r"(?<![\w.])(confirm|prompt|alert)\s*\(", f.read_text()):
+            pattern = r"(?<![\w.])(confirm|prompt|alert)\s*\("
+            for m in re.finditer(pattern, f.read_text()):
                 offenders.append(f"{f.name}: {m.group(1)}()")
         assert not offenders, offenders
 
@@ -165,3 +166,42 @@ class TestInterfaceQuality:
         main = (WEB / "js" / "main.js").read_text()
         assert main.count("registerPalette") >= 4, \
             "palette should offer panels, actions, endpoints and commands"
+
+    # NOTE: there is deliberately no static test for "`${...}` used inside a
+    # quoted string" — the bug that shipped "${skeleton(3)}" as visible text
+    # in the System panel. Detecting it in source requires distinguishing JS
+    # string delimiters from regex literals AND from HTML attribute quotes
+    # inside template literals; three attempts produced only false alarms.
+    # The reliable check is rendering: a browser pass over all 13 panels
+    # asserting no panel's textContent contains "${". That is run against the
+    # live gateway, not here, because it needs a real DOM.
+
+    def test_text_tokens_meet_wcag_aa_on_both_grounds(self):
+        """Contrast is measured, not eyeballed: dark --faint once sat at
+        2.95:1, under even the 3.0 UI floor, while carrying real words."""
+        import re
+
+        def lum(hex_):
+            v = [int(hex_[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            f = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+                 for c in v]
+            return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]
+
+        def ratio(a, b):
+            hi, lo = sorted((lum(a), lum(b)), reverse=True)
+            return (hi + 0.05) / (lo + 0.05)
+
+        css = (WEB / "css" / "app.css").read_text()
+        blocks = {
+            "dark": css.split(":root {")[1].split("}")[0],
+            "light": css.split(':root[data-theme="light"] {')[1].split("}")[0],
+        }
+        bad = []
+        for theme, block in blocks.items():
+            tok = dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6});", block))
+            for name in ("text", "dim", "faint", "accent", "ok", "warn", "danger"):
+                worst = min(ratio(tok[name], tok["surface"]),
+                            ratio(tok[name], tok["bg"]))
+                if worst < 4.5:
+                    bad.append(f"{theme}/--{name} {worst:.2f}:1")
+        assert not bad, f"below WCAG AA 4.5:1 — {bad}"
