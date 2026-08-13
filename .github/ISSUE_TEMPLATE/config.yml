@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ichbinmeraj/fws-console/security/advisories/new
+    about: Report privately — do not open a public issue. See SECURITY.md.
+  - name: Gateway (fairino-fws) issues
+    url: https://github.com/ichbinmeraj/fairino-fws/issues
+    about: For the FWS gateway itself, not the console UI.

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is Raspberry Pi OS Bookworm's system Python, the documented
+        # deployment target; 3.13 is where development happens.
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      # The console depends on the gateway; install the alpha with --pre.
+      - run: pip install --pre -e ".[dev]"
+      - run: pytest -q --tb=short
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --pre -e ".[dev]"
+      - run: ruff check fws_console tests
+
+  guards:
+    name: the console's load-bearing invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No build step, no framework, no runtime dependencies
+        # The UI is plain ES modules served from the wheel; a robot cell may
+        # be air-gapped. Make the constraint mechanical, not remembered.
+        run: |
+          if [ -f package.json ] || [ -f fws_console/web/package.json ]; then
+            echo "::error::no package.json — the console ships without a build step"; exit 1
+          fi
+          echo "OK: no npm/build tooling"
+
+      - name: No external URLs in shipped assets (no CDN)
+        # Every byte must ship in the wheel; a robot cell has no internet.
+        run: |
+          if grep -rnE 'https?://[^"'"'"' )<>]+' fws_console/web \
+              --include='*.js' --include='*.css' --include='*.html'; then
+            echo "::error::shipped asset references an external URL"; exit 1
+          fi
+          echo "OK: assets are self-contained"
+
+      - name: No native blocking dialogs
+        # window.confirm/prompt/alert block the loop and are browser-
+        # suppressible — which would silently disable a robot confirmation.
+        run: |
+          if grep -rnE '(^|[^.a-zA-Z_])(confirm|prompt|alert)\s*\(' \
+              fws_console/web/js --include='*.js' | grep -v 'js/ui.js'; then
+            echo "::error::use the styled dialog() from ui.js, not window.*"; exit 1
+          fi
+          echo "OK: no native dialogs"

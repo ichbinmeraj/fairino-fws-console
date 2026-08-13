@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in the console behaves wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. This console commands a physical robot, so if
+        the bug involves unexpected **motion**, say so up front — and remember
+        the console is not a safety device: the physical E-stop is.
+  - type: input
+    id: gateway
+    attributes:
+      label: Gateway version
+      description: "`GET /api/v1/system/version`, or the `fairino-fws` version installed."
+      placeholder: "0.1.0a1"
+    validations:
+      required: true
+  - type: input
+    id: controller
+    attributes:
+      label: Controller model & firmware
+      description: From the robot chip in the header, or `GET /api/v1/robot`.
+      placeholder: "FR5-V1-002(V6.0), v3.8.5.1"
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Simulator or hardware?
+      options:
+        - Simulator (fws-console --simulator)
+        - Real robot
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: "Firefox 130 / Chrome 129 / Safari 17"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Browser console output
+      description: Anything in DevTools → Console. Redact any API key before pasting.
+      render: text

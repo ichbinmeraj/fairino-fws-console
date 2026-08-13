@@ -1,0 +1,60 @@
+name: Release
+
+# Publishes to PyPI when a version tag (v1.2.3) is pushed, using PyPI
+# Trusted Publishing (OIDC) — no API token is stored anywhere.
+#
+# One-time setup on PyPI (https://pypi.org/manage/account/publishing/):
+#   Project name:      fairino-fws-console
+#   Owner:             ichbinmeraj
+#   Repository:        fws-console
+#   Workflow name:     release.yml
+#   Environment:       pypi
+#
+# Release the gateway (fairino-fws) FIRST: this package depends on
+# fairino-fws>=0.1.0a1, and pip must be able to resolve it from PyPI.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel + sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      # Guard the sdist: it must never carry a browser profile or a real
+      # config/key file again (a stray one once inflated it to 24 MB).
+      - name: sdist carries no local artifacts
+        run: |
+          if tar tzf dist/*.tar.gz | grep -qiE 'ff-profile|chrome-profile|/api-keys|/fws-live\.toml$'; then
+            echo "::error::sdist contains a local artifact — check the include-list"; exit 1
+          fi
+          echo "OK: sdist is clean"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

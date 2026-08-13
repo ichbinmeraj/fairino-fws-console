@@ -1,5 +1,7 @@
 # FWS Console
 
+[![CI](https://github.com/ichbinmeraj/fws-console/actions/workflows/ci.yml/badge.svg)](https://github.com/ichbinmeraj/fws-console/actions/workflows/ci.yml)
+
 **An operator console for [FWS](https://github.com/ichbinmeraj/fairino-fws),
 the REST + WebSocket gateway for Fairino collaborative robots.**
 
