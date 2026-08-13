@@ -53,7 +53,7 @@ ssh -L 8000:localhost:8000 user@<gateway-host>
 |---|---|
 | **Operate** | 10 Hz WebSocket telemetry, 3D arm view, joint/Cartesian jog, per-joint limit headroom |
 | **Faults** | live fault state, searchable error-code table with the gateway's own caveat about firmware versions |
-| **Programs** | upload with md5 verification, load, select, validate against the controller's own Lua compiler, run/pause/resume/stop |
+| **Programs** | the programs already on the controller — list and download each — plus upload with md5 verification, load, select, validate against the controller's own Lua compiler, run/pause/resume/stop |
 | **I/O** | digital, tool digital and analog, read on demand |
 | **Force** | wrist force/torque, sensor config, zeroing, activation, and the strategy boundary |
 | **Capabilities** | the controller's available / absent / unknown feature matrix, with re-probe |

@@ -46,6 +46,16 @@ itself at `/console`.
   commands; a keyboard model (`?` sheet, `g`+`n` jumps); styled modal
   dialogs replacing native `confirm`/`prompt`.
 
+### Added
+
+- **Programs — browse and download what is already on the controller.** The
+  panel now defaults to the controller's real `.lua` directory (read over FTP;
+  the controller's own listing RPC is quarantined because it can wedge the
+  channel), with a toggle back to the gateway's own upload index. Every
+  program has a **download** button that saves the file locally — previously
+  the panel showed only files uploaded through this gateway, so programs put
+  on the controller by the teach pendant were invisible.
+
 ### Robustness
 
 Hardening found by driving every panel against a live FR5 (firmware

@@ -25,6 +25,21 @@ function empty(icon, text) {
     <svg viewBox="0 0 17 17"><use href="#${icon}"/></svg>${esc(text)}</div>`;
 }
 
+// Hand the browser a file to save. The console is served by the gateway (a
+// real page, not a sandboxed frame), so an object-URL download works. Used
+// for program text the gateway returns as JSON, which a plain <a download>
+// cannot save directly.
+function saveText(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // --- Faults --------------------------------------------------------------
 
 async function faults(root, api, log, toast) {
@@ -91,7 +106,11 @@ async function programs(root, api, log, toast) {
   root.innerHTML = `
     <div class="grid" style="grid-template-columns:minmax(0,1.4fr) minmax(280px,1fr)">
       <div class="card">
-        <h2>Programs on this gateway
+        <h2>Programs
+          <span class="seg" id="prog-src" style="margin-left:10px">
+            <button data-src="controller" aria-pressed="true">On controller</button>
+            <button data-src="gateway" aria-pressed="false">Uploaded here</button>
+          </span>
           <span class="spacer"></span>
           <label class="btn btn-sm">
             <svg viewBox="0 0 17 17"><use href="#i-upload"/></svg>Upload .lua
@@ -126,21 +145,62 @@ async function programs(root, api, log, toast) {
       </div>
     </div>`;
 
+  // Two listings: what is actually ON the controller (the real directory,
+  // read over FTP -- the controller's own GetLuaList RPC is quarantined
+  // because it can wedge the channel) versus the gateway's own upload index.
+  // Default to the controller, because that is what an operator came to see.
+  let source = 'controller';
+
   const refresh = async () => {
+    const rows = root.querySelector('#prog-rows');
+    rows.innerHTML = '<tr><td colspan="4"><span class="small dim">loading…</span></td></tr>';
     try {
-      const r = await api.get('/api/v1/programs');
-      root.querySelector('#prog-note').textContent = r.note || '';
-      root.querySelector('#prog-rows').innerHTML = (r.programs || []).map((p) => `
+      let list = [];
+      let note = '';
+      if (source === 'controller') {
+        const r = await api.get('/api/v1/files/lua?source=controller',
+          { timeout: 120000 });
+        list = r.files || [];
+        note = r.note || '';
+      } else {
+        const r = await api.get('/api/v1/programs');
+        list = r.programs || [];
+        note = r.note || '';
+      }
+      root.querySelector('#prog-note').textContent = note;
+      rows.innerHTML = list.map((p) => {
+        const md5 = (p.md5 || '').slice(0, 10);
+        return `
         <tr><td style="text-align:left" class="mono">${esc(p.name)}</td>
-        <td>${p.bytes}</td><td class="small faint mono">${esc((p.md5 || '').slice(0, 10))}…</td>
+        <td>${p.bytes ?? '?'}</td>
+        <td class="small faint mono">${esc(md5)}${md5 ? '…' : ''}</td>
         <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-sm btn-ghost" data-dl="${esc(p.name)}">download</button>
           <button class="btn btn-sm" data-cmd="1" data-load="${esc(p.name)}">load</button>
           <button class="btn btn-sm" data-cmd="1" data-sel="${esc(p.name)}">select</button>
+          ${source === 'gateway' ? `
           <button class="btn btn-sm btn-ghost" data-val="${esc(p.name)}">validate</button>
-          <button class="btn btn-sm btn-ghost" data-cmd="1" data-del="${esc(p.name)}">delete</button>
-        </td></tr>`).join('')
-        || `<tr><td colspan="4">${empty('i-inbox', 'none uploaded through this gateway yet')}</td></tr>`;
+          <button class="btn btn-sm btn-ghost" data-cmd="1" data-del="${esc(p.name)}">delete</button>`
+            : ''}
+        </td></tr>`;
+      }).join('')
+        || `<tr><td colspan="4">${empty('i-inbox', source === 'controller'
+            ? 'no .lua files on the controller (or FTP is not enabled)'
+            : 'none uploaded through this gateway yet')}</td></tr>`;
 
+      for (const b of root.querySelectorAll('[data-dl]')) {
+        b.onclick = async () => {
+          const name = b.dataset.dl;
+          b.disabled = true;
+          try {
+            const r = await api.get(`/api/v1/files/lua/${encodeURIComponent(name)}`,
+              { timeout: 120000 });
+            saveText(name, r.content ?? '');
+            log(`downloaded ${name} (${r.bytes ?? (r.content || '').length} bytes)`, 'ok');
+          } catch (e) { fail(log, toast, `download ${name}: ${e.message}`); }
+          finally { b.disabled = false; }
+        };
+      }
       for (const b of root.querySelectorAll('[data-sel]')) {
         b.onclick = () => api.post(`/api/v1/programs/${encodeURIComponent(b.dataset.sel)}/select`, {})
           .then(() => log(`selected ${b.dataset.sel}`, 'ok'), (e) => fail(log, toast, e.message));
@@ -171,7 +231,11 @@ async function programs(root, api, log, toast) {
                 (e) => fail(log, toast, e.message));
       }
       document.dispatchEvent(new CustomEvent('fws-sync'));
-    } catch (e) { log(`programs: ${e.message}`, 'err'); }
+    } catch (e) {
+      rows.innerHTML = `<tr><td colspan="4"><div class="banner warn">`
+        + `<span class="small">${esc(e.message)}</span></div></td></tr>`;
+      log(`programs: ${e.message}`, 'err');
+    }
 
     try {
       const x = await api.get('/api/v1/execution');
@@ -183,6 +247,19 @@ async function programs(root, api, log, toast) {
       root.querySelector('#exec-state').innerHTML = `<dt>State</dt><dd>${esc(e.message)}</dd>`;
     }
   };
+
+  // The listing toggle: the controller's real directory vs the gateway index.
+  for (const b of root.querySelectorAll('#prog-src button')) {
+    b.onclick = () => {
+      if (source === b.dataset.src) return;
+      source = b.dataset.src;
+      for (const x of b.parentElement.children) {
+        x.setAttribute('aria-pressed', String(x === b));
+      }
+      root.querySelector('#prog-validate').innerHTML = '';
+      refresh();
+    };
+  }
 
   root.querySelector('#prog-file').onchange = async (ev) => {
     const f = ev.target.files[0];
