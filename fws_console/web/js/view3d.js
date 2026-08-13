@@ -59,7 +59,6 @@ function smoothNormals(v, f) {
 export class View3D {
   constructor(canvas) {
     this.c = canvas;
-    this.ctx = canvas.getContext('2d');
     this.yaw = -35 * RAD;
     this.pitch = 22 * RAD;
     this.dist = 2100;
@@ -70,15 +69,43 @@ export class View3D {
     this.trail = [];
     this.zc = 0;      // vertical centre, follows the pose (smoothed)
 
+    // Offload rendering to a worker when the browser can: the page thread
+    // then never rasterises a triangle, so jog buttons, charts and DOM
+    // updates stop competing with the stage. Same painter code either way.
+    this.worker = null;
+    if ('transferControlToOffscreen' in canvas && typeof Worker === 'function') {
+      try {
+        const off = canvas.transferControlToOffscreen();
+        this.worker = new Worker('js/stage-worker.js', { type: 'module' });
+        this.worker.postMessage({ type: 'canvas', canvas: off }, [off]);
+      } catch { this.worker = null; }
+    }
+    // getContext must come AFTER the transfer attempt: a canvas with a 2D
+    // context can no longer be transferred, and a transferred canvas can no
+    // longer give the page a context.
+    this.ctx = this.worker ? null : canvas.getContext('2d');
+
     this._bindOrbit();
     this._resize();
     new ResizeObserver(() => this._resize()).observe(canvas);
+  }
+
+  _post(msg) { this.worker.postMessage(msg); }
+
+  _camera() {
+    this._post({ type: 'camera', yaw: this.yaw, pitch: this.pitch,
+                 dist: this.dist });
   }
 
   /** Coalesce redraw requests to one paint per display frame. Purely a
    * scheduling change: what gets painted, and how the drag responds, is
    * untouched. */
   _schedule() {
+    if (this.worker) {
+      if (this._raf) return;
+      this._raf = requestAnimationFrame(() => { this._raf = 0; this._camera(); });
+      return;
+    }
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => { this._raf = 0; this.draw(); });
   }
@@ -88,11 +115,15 @@ export class View3D {
     // (or quarters) the pixels rasterised per frame on HiDPI displays.
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const r = this.c.getBoundingClientRect();
+    this.w = r.width;
+    this.h = r.height;
+    if (this.worker) {
+      this._post({ type: 'resize', w: this.w, h: this.h, dpr });
+      return;
+    }
     this.c.width = Math.max(1, Math.round(r.width * dpr));
     this.c.height = Math.max(1, Math.round(r.height * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.w = r.width;
-    this.h = r.height;
     this.draw();
   }
 
@@ -150,6 +181,7 @@ export class View3D {
     this.fit();
     this.yaw = yawDeg * RAD;
     this.pitch = pitchDeg * RAD;
+    if (this.worker) { this._camera(); return; }
     this.draw();
   }
 
@@ -178,6 +210,11 @@ export class View3D {
       }
     } else {
       this.dist = 2100;
+    }
+    if (this.worker) {
+      this._post({ type: 'camera', yaw: this.yaw, pitch: this.pitch,
+                   dist: this.dist, zc: this.zc });
+      return;
     }
     this.draw();
   }
@@ -208,6 +245,11 @@ export class View3D {
    * in link-frame mm. Flattened to typed arrays once, here, not per frame.
    */
   setMeshes(data, linkNames) {
+    if (this.worker) {
+      this._post({ type: 'meshes', data, links: linkNames });
+      this.meshes = true;   // truthy: "meshes are in play" for callers
+      return;
+    }
     this.meshes = linkNames.map((name) => {
       const m = data[name];
       if (!m) return null;
@@ -237,6 +279,22 @@ export class View3D {
     this.points = points;
     this.model = model;
     this.frames = frames || null;
+    if (this.worker) {
+      if (points) {
+        // Mirror the worker's easing so fit() frames from the same centre.
+        let zlo = 0, zhi = 0;
+        for (const q of points) {
+          if (q[2] < zlo) zlo = q[2]; if (q[2] > zhi) zhi = q[2];
+        }
+        const dz = (zlo + zhi) / 2 - this.zc;
+        this.zc += Math.abs(dz) < 0.05 ? dz : dz * 0.08;
+      }
+      this._post({
+        type: 'pose', points, frames,
+        model: model ? { reach: model.reach } : null,
+      });
+      return;
+    }
     if (points) {
       // Follow the arm vertically, slowly, so the view neither jumps per
       // frame nor loses an arm working entirely below the base plane.
@@ -257,7 +315,29 @@ export class View3D {
     this.draw();
   }
 
-  clearTrail() { this.trail = []; this.draw(); }
+  clearTrail() {
+    if (this.worker) { this._post({ type: 'clearTrail' }); return; }
+    this.trail = [];
+    this.draw();
+  }
+
+  /** Resolve theme tokens on the page (workers cannot read CSS) and ship
+   * them across. Also called at boot and on resize. */
+  syncTheme() {
+    if (!this.worker) return;
+    this._post({
+      type: 'theme',
+      theme: {
+        dark: this._isDark(),
+        line: this._css('--line', '#21272e'),
+        line2: this._css('--line-2', '#313941'),
+        dim: this._css('--dim', '#9299a1'),
+        text: this._css('--text', '#e5e8ec'),
+        accent: this._css('--accent', '#3f9fe8'),
+        data: this._css('--data', '#0ca3be'),
+      },
+    });
+  }
 
   _css(name, fallback) {
     const v = getComputedStyle(this.c).getPropertyValue(name).trim();
@@ -281,9 +361,14 @@ export class View3D {
     return this._pal;
   }
 
-  invalidateTheme() { this._pal = null; this.draw(); }
+  invalidateTheme() {
+    this._pal = null;
+    if (this.worker) { this.syncTheme(); return; }
+    this.draw();
+  }
 
   draw() {
+    if (this.worker) { this._schedule(); return; }
     const g = this.ctx;
     if (!g || !this.w) return;
 

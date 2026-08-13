@@ -38,6 +38,7 @@ function applyTheme(pref) {
   try { localStorage.setItem('fws-theme', pref); } catch { /* private mode */ }
   invalidateChartTheme();
   view.invalidateTheme();
+  view.syncTheme?.();
   const label = $('theme-label');
   if (label) label.textContent = pref;
 }
