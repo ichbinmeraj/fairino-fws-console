@@ -205,3 +205,19 @@ class TestInterfaceQuality:
                 if worst < 4.5:
                     bad.append(f"{theme}/--{name} {worst:.2f}:1")
         assert not bad, f"below WCAG AA 4.5:1 — {bad}"
+
+    def test_stage_controls_are_clickable_by_role_and_contained(self):
+        """The stage overlay covers the whole canvas with pointer-events:none
+        and re-enables its controls. Two bugs shipped here: the view-preset
+        segment was omitted from a class allowlist (unclickable), and the
+        tool row overflowed the stage sideways and landed under the Master
+        panel. Guard both: re-enable by ROLE, and let the top bar WRAP so it
+        can never spill past the stage edge."""
+        css = (WEB / "css" / "app.css").read_text()
+        # role-based re-enable, not a brittle class list
+        assert ":is(button, a, input" in css, \
+            "stage controls should be re-enabled by role, not by class name"
+        # the segment is not singled out, which is what regressed
+        assert ".stage-overlay .seg button { pointer-events: auto; }" not in css
+        # the top bar wraps so wide toolbars stay inside the stage
+        assert "flex-wrap: wrap" in css.split(".stage-top")[1].split("}")[0]

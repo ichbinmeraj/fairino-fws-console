@@ -483,8 +483,19 @@ tbody tr:last-child td { border-bottom: none; }
   display: flex; flex-direction: column; justify-content: space-between;
   padding: 12px;
 }
-.stage-top, .stage-bottom { display: flex; align-items: center; gap: 8px; }
-.stage-overlay .tag, .stage-overlay .btn { pointer-events: auto; }
+.stage-top, .stage-bottom {
+  display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap;
+}
+.stage-tools { margin-left: auto; }              /* pin right, wrap as a unit */
+.stage-top .stage-note { flex: 0 1 auto; min-width: 0; }
+/* The overlay covers the whole stage and passes clicks through to the
+   canvas; interactivity is re-enabled per control. Matched by ROLE, not by
+   class — listing classes is what shipped the view-preset segment
+   unclickable, and a JS .click() in the tests never caught it because
+   .click() bypasses hit-testing. Anything focusable added later just works. */
+.stage-overlay :is(button, a, input, select, textarea, [tabindex], .tag) {
+  pointer-events: auto;
+}
 .stage-overlay .tag {
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   backdrop-filter: blur(6px);
@@ -504,7 +515,7 @@ tbody tr:last-child td { border-bottom: none; }
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   backdrop-filter: blur(6px);
 }
-.stage-tools .seg button { padding: 4px 9px; font-size: var(--fs-2xs); letter-spacing: 0.05em; }
+.stage-tools .seg button { padding: 4px 7px; font-size: var(--fs-2xs); letter-spacing: 0.02em; }
 #stage-scrim {
   position: absolute; inset: 0; z-index: 5;
   display: flex; align-items: center; justify-content: center;
