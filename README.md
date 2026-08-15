@@ -1,6 +1,6 @@
 # FWS Console
 
-[![CI](https://github.com/ichbinmeraj/fws-console/actions/workflows/ci.yml/badge.svg)](https://github.com/ichbinmeraj/fws-console/actions/workflows/ci.yml)
+[![CI](https://github.com/ichbinmeraj/fairino-fws-console/actions/workflows/ci.yml/badge.svg)](https://github.com/ichbinmeraj/fairino-fws-console/actions/workflows/ci.yml)
 
 **An operator console for [FWS](https://github.com/ichbinmeraj/fairino-fws),
 the REST + WebSocket gateway for Fairino collaborative robots.**
@@ -95,7 +95,7 @@ plain ES modules in `fws_console/web/`, served by the gateway. Edit a file,
 refresh the browser.
 
 ```bash
-git clone https://github.com/ichbinmeraj/fws-console && cd fws-console
+git clone https://github.com/ichbinmeraj/fairino-fws-console && cd fairino-fws-console
 python3 -m venv .venv && .venv/bin/pip install -e .[dev]
 .venv/bin/fws-console --simulator
 ```

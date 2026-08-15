@@ -19,7 +19,7 @@ a default.
 ## Getting set up
 
 ```bash
-git clone https://github.com/ichbinmeraj/fws-console && cd fws-console
+git clone https://github.com/ichbinmeraj/fairino-fws-console && cd fairino-fws-console
 python3 -m venv .venv && .venv/bin/pip install -e .[dev]
 .venv/bin/fws-console --simulator
 ```

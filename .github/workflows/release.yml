@@ -6,7 +6,7 @@ name: Release
 # One-time setup on PyPI (https://pypi.org/manage/account/publishing/):
 #   Project name:      fairino-fws-console
 #   Owner:             ichbinmeraj
-#   Repository:        fws-console
+#   Repository:        fairino-fws-console
 #   Workflow name:     release.yml
 #   Environment:       pypi
 #
