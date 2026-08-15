@@ -44,7 +44,13 @@ Issues = "https://github.com/ichbinmeraj/fairino-fws-console/issues"
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
-  "httpx>=0.27",
+  # Capped below 1.0: this package installs with `pip install --pre` (the
+  # gateway dependency is an alpha), and --pre is global -- without the cap it
+  # pulls httpx 1.0.dev, which dropped httpx.BaseTransport and breaks
+  # Starlette's TestClient at import. 0.28 is what the gateway pins and tests
+  # green against. See tools note; bump deliberately when Starlette supports
+  # httpx 1.
+  "httpx>=0.27,<0.29",
   "ruff>=0.6",
 ]
 
