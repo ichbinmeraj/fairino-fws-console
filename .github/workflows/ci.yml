@@ -31,7 +31,15 @@ jobs:
           cache: pip
       # The console depends on the gateway; install the alpha with --pre.
       - run: pip install --pre -e ".[dev]"
-      - run: pytest -q --tb=short
+      # Surface failing test ids as ::error:: annotations (readable without
+      # log access) as well as the full log; isolate the pytest cache.
+      - name: Run tests
+        run: |
+          set -o pipefail
+          pytest -q --tb=short -rf -p no:cacheprovider 2>&1 | tee pytest.out || {
+            grep -E "^FAILED|^ERROR" pytest.out | sed 's/^/::error::/'
+            exit 1
+          }
 
   lint:
     runs-on: ubuntu-latest
