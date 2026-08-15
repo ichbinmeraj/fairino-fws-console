@@ -134,9 +134,12 @@ export async function teach(root, api, log, toast) {
         <div class="teach-vec" id="wf-vec"></div>
         <button class="btn btn-sm" id="wf-set" data-cmd="1" style="margin-top:8px">
           Define work object</button>
+        <button class="btn btn-sm btn-ghost" id="wf-reset" data-cmd="1"
+                style="margin-top:8px">Reset to base</button>
         <div class="small faint" style="margin-top:8px">
           Teach a workpiece origin: jog the TCP to it, "use current TCP",
-          define. Every position expressed in this frame moves with it.</div>
+          define. Every position expressed in this frame moves with it.
+          Reset makes the frame coincide with base again (all zeros, ref 0).</div>
       </div>
 
       <div class="card">
@@ -323,7 +326,9 @@ export async function teach(root, api, log, toast) {
   };
   showFrames();
 
-  const putFrame = async (path, body, label) => {
+  const putFrame = async (path, body, label,
+                          dialog = { title: 'Define this frame?',
+                                     confirmLabel: 'Define it' }) => {
     try {
       await api.put(path, body);
       log(label, 'ok');
@@ -332,9 +337,7 @@ export async function teach(root, api, log, toast) {
       // The gateway refuses once without confirm, stating the consequence in
       // its own words; surface that text, then resend confirmed.
       if (e instanceof ApiError && e.status === 400
-          && await confirmGateway(e.message, {
-            title: 'Define this frame?', confirmLabel: 'Define it',
-          })) {
+          && await confirmGateway(e.message, dialog)) {
         try {
           await api.put(path, { ...body, confirm: true });
           log(`${label} (confirmed)`, 'ok');
@@ -363,6 +366,16 @@ export async function teach(root, api, log, toast) {
     putFrame(`/api/v1/frames/work/${id}`,
       { offset: readVec($id('#wf-vec')), ref_frame: Number($id('#wf-ref').value) },
       `work object ${id} defined`);
+  };
+  $id('#wf-reset').onclick = () => {
+    // Reset = an ordinary define with the identity frame. Deliberately not a
+    // separate gateway call: the wire has no "unset", only SetWObjCoord, and
+    // pretending otherwise would hide what is actually sent.
+    const id = Number($id('#wf-id').value);
+    putFrame(`/api/v1/frames/work/${id}`,
+      { offset: [0, 0, 0, 0, 0, 0], ref_frame: 0 },
+      `work object ${id} reset to base`,
+      { title: 'Reset this work object?', confirmLabel: 'Reset it' });
   };
 
   // --- point tables -------------------------------------------------------

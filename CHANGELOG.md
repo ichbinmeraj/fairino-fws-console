@@ -4,7 +4,16 @@ All notable changes to `fairino-fws-console` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); the project follows
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
-## [0.1.0a0] — unreleased
+## [Unreleased]
+
+### Added
+
+- Teach panel: a **Reset to base** button on the work object card — one
+  click returns the frame to the identity (all-zero offset in ref 0),
+  through the same gateway confirm flow as defining it. Previously the only
+  way back was hand-typing six zeros.
+
+## [0.1.0a0] — 2026-08-15
 
 First release: an optional operator + developer console for
 [FWS](https://github.com/ichbinmeraj/fairino-fws), served by the gateway

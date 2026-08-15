@@ -117,6 +117,20 @@ class TestDeveloperPanels:
         assert "GetRobotTeachingPoint" in src
         assert "confirmGateway" in src, "frame/table writes keep the confirm flow"
 
+    def test_work_object_reset_sends_exactly_the_identity_frame(self):
+        """"Reset to base" is an ordinary frame define whose payload is pinned
+        here: all-zero offset in ref 0. If a future edit changes what reset
+        sends, this must fail — an operator pressing Reset is owed exactly
+        the base frame, not "roughly zero"."""
+        src = (WEB / "js" / "teach.js").read_text()
+        assert "wf-reset" in src, "the work object card offers a reset"
+        i = src.index("#wf-reset")
+        body = src[i:i + 700]
+        assert "offset: [0, 0, 0, 0, 0, 0]" in body
+        assert "ref_frame: 0" in body
+        assert "Reset this work object?" in body, \
+            "the confirm dialog says reset, not define"
+
     def test_sim_run_can_never_command_the_robot(self):
         """Sim run animates a ghost through waypoints in the 3D view. Its
         entire path — panel dispatch, shell animation, renderer — must be
