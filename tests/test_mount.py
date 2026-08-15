@@ -117,6 +117,37 @@ class TestDeveloperPanels:
         assert "GetRobotTeachingPoint" in src
         assert "confirmGateway" in src, "frame/table writes keep the confirm flow"
 
+    def test_the_console_reacts_to_pushed_events(self):
+        """The gateway pushes edges on /ws/events. Before this the console
+        learned about a fault by watching a 10 Hz sample change, and could
+        not learn about a watchdog stop at all -- the gateway halting the arm
+        because a client vanished had no way to reach a person."""
+        stream = (WEB / "js" / "stream.js").read_text()
+        main = (WEB / "js" / "main.js").read_text()
+        assert "/ws/events" in stream, "the event socket exists"
+        assert "export class Events" in stream
+        assert "events.connect()" in main, "and the console opens it"
+        assert "audit.watchdog.stop" in main, "the watchdog stop is surfaced"
+        assert "fault.latched" in main
+
+    def test_the_event_socket_reads_the_key_at_connect_time(self):
+        """The key is typed into the sidebar AFTER boot, and a WebSocket
+        carries it in the URL -- so baking it in at construction would leave
+        the socket permanently unauthenticated on a keyed gateway."""
+        stream = (WEB / "js" / "stream.js").read_text()
+        i = stream.index("export class Events")
+        body = stream[i:]
+        assert "this.getKey()" in body, "read at connect, not construction"
+        main = (WEB / "js" / "main.js").read_text()
+        assert "events.close(); events.connect();" in main, (
+            "changing the key must reconnect the event socket")
+
+    def test_a_keepalive_is_not_treated_as_an_event(self):
+        """The gateway sends one when idle so a quiet stream is
+        distinguishable from a dead one. Showing it would be noise."""
+        stream = (WEB / "js" / "stream.js").read_text()
+        assert "'keepalive'" in stream
+
     def test_taught_points_live_on_the_gateway_not_in_the_browser(self):
         """A taught point is production data. In localStorage it died with a
         browser profile and no API client or CI job could see it, so the

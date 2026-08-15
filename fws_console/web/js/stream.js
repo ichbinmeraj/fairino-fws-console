@@ -95,4 +95,60 @@ export class Stream {
   }
 }
 
+/** The gateway's EVENT socket: what changed, pushed, rather than what is.
+ *
+ * /ws/state is a 10 Hz sample. This is edge-triggered — a fault latching, a
+ * program finishing, the watchdog stopping the arm — so the console reacts
+ * the moment it happens instead of noticing on the next poll. The watchdog
+ * stop in particular had no other way to reach a person.
+ *
+ * Deliberately a separate socket from the telemetry one: they have different
+ * failure modes, and a console that loses its event feed should still show
+ * live joint positions rather than going dark.
+ */
+export class Events {
+  constructor(wsOrigin, getKey = () => null) {
+    // The key is read at CONNECT time, not here: it is typed into the
+    // sidebar after boot, so baking it in at construction would leave the
+    // event socket permanently unauthenticated on a keyed gateway.
+    this.wsOrigin = wsOrigin;
+    this.getKey = getKey;
+    this.ws = null;
+    this.retries = 0;
+    this.closed = false;
+    this.onEvent = () => {};
+  }
+
+  connect() {
+    this.closed = false;
+    const key = this.getKey();
+    const url = `${this.wsOrigin}/ws/events`
+      + (key ? `?key=${encodeURIComponent(key)}` : '');
+    let ws;
+    try { ws = new WebSocket(url); } catch { return this._retry(); }
+    this.ws = ws;
+    ws.onopen = () => { this.retries = 0; };
+    ws.onmessage = (ev) => {
+      let e;
+      try { e = JSON.parse(ev.data); } catch { return; }
+      // The gateway sends a keepalive when idle so a quiet stream is
+      // distinguishable from a dead one; it is not an event.
+      if (!e || e.kind === 'keepalive') return;
+      this.onEvent(e);
+    };
+    ws.onclose = () => { if (!this.closed) this._retry(); };
+    ws.onerror = () => { try { ws.close(); } catch { /* onclose handles it */ } };
+  }
+
+  _retry() {
+    const delay = Math.min(500 * 2 ** this.retries++, 10000);
+    setTimeout(() => { if (!this.closed) this.connect(); }, delay);
+  }
+
+  close() {
+    this.closed = true;
+    if (this.ws) try { this.ws.close(); } catch { /* already gone */ }
+  }
+}
+
 export { FIELDS };

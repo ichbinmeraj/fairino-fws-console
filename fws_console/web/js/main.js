@@ -1,7 +1,7 @@
 // Console shell: theme, navigation, status, control lease, jogging, charts.
 
 import { Api, ApiError, Lease } from './api.js';
-import { Stream } from './stream.js';
+import { Events, Stream } from './stream.js';
 import { View3D } from './view3d.js';
 import { MODELS, agreement, modelFor, verdict } from './kin.js';
 import { PANELS } from './panels.js';
@@ -17,6 +17,7 @@ import {
 const api = new Api('');            // same origin: the gateway serves this page
 const lease = new Lease(api);
 const stream = new Stream(api.wsOrigin);
+const events = new Events(api.wsOrigin, () => api.apiKey);
 const $ = (id) => document.getElementById(id);
 
 let model = MODELS.sim;
@@ -72,6 +73,9 @@ function setApiKey(key) {
   } catch { /* private mode: key lives for this page only */ }
   const label = $('key-label');
   if (label) label.textContent = key ? 'key set' : 'no key';
+  // Reconnect the event socket: a WebSocket carries its key in the URL, so
+  // an already-open one is still using the old value (or none).
+  try { events.close(); events.connect(); } catch { /* not up yet */ }
 }
 
 try { api.apiKey = localStorage.getItem('fws-api-key') || null; } catch { /* ignore */ }
@@ -979,11 +983,59 @@ async function boot() {
   await loadToolFrame();
 
   stream.connect();
+  events.onEvent = onGatewayEvent;
+  events.connect();
   selectTab(location.hash.slice(1) || 'operate', false);
 
   // No release-on-unload: sendBeacon cannot carry the control-token header,
   // and a closed tab simply stops heartbeating — the lease lapses within its
   // TTL, which is exactly the failure mode the gateway watchdog handles.
+}
+
+/** React to a pushed gateway event.
+ *
+ * These are edges, not samples: each one happened once, just now. The
+ * watchdog stop is the one that matters most — the gateway halting the arm
+ * because a client vanished mid-move previously had no way to reach a
+ * person at all.
+ */
+function onGatewayEvent(e) {
+  const kind = e.kind || '';
+  if (kind === 'audit.watchdog.stop') {
+    toast(`Watchdog STOPPED the arm — ${e.actor || 'a client'} `
+          + `stopped renewing its lease`, 'err', true);
+    log(`watchdog stop (${e.actor || 'unknown'}: ${e.reason || 'lapsed'})`,
+        'err');
+    return;
+  }
+  if (kind === 'fault.latched') {
+    toast(`Fault ${e.main}/${e.sub} latched`, 'err');
+    log(`fault latched ${e.main}/${e.sub}`, 'err');
+    return;
+  }
+  if (kind === 'fault.cleared') {
+    log('fault cleared', 'ok');
+    return;
+  }
+  if (kind === 'telemetry.down') {
+    log('telemetry stream went down', 'warn');
+    return;
+  }
+  if (kind === 'telemetry.up') {
+    log('telemetry stream restored', 'ok');
+    return;
+  }
+  if (kind === 'recording.dumped') {
+    // The flight recorder wrote the seconds BEFORE the fault. Saying so is
+    // the difference between that file existing and anyone knowing it does.
+    toast(`Flight recorder saved ${e.file}`, '', false);
+    log(`flight recorder dumped ${e.file}`, 'ok');
+    return;
+  }
+  if (kind.startsWith('audit.') && e.dropped) {
+    // A gap is never silent: the gateway counts what it had to drop.
+    log(`${e.dropped} event(s) dropped — this console fell behind`, 'warn');
+  }
 }
 
 // Panels rebuild rows after their own fetches; they raise this when their

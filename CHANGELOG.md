@@ -4,6 +4,27 @@ All notable changes to `fairino-fws-console` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); the project follows
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+## [0.1.0a2] — 2026-08-15
+
+### Added
+
+- **The console reacts to pushed events.** It opens the gateway's
+  `/ws/events` socket alongside the telemetry one, so a fault latching, the
+  telemetry link dropping, or the flight recorder saving a dump reaches the
+  operator the moment it happens rather than on the next sample.
+
+  The one that matters most is the **watchdog stop**: the gateway halting
+  the arm because a client stopped renewing its lease previously had no way
+  to reach a person at all. It now raises a sticky alert naming the client
+  that vanished.
+
+  A separate socket from telemetry on purpose — they fail differently, and a
+  console that loses its event feed should still show live joint positions
+  rather than going dark. The key is read at connect time and the socket
+  reconnects when it changes, since a WebSocket carries its key in the URL.
+
+- Requires `fairino-fws>=0.1.0a8` for the event stream.
+
 ## [0.1.0a1] — 2026-08-15
 
 ### Changed
