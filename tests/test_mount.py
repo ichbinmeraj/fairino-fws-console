@@ -117,6 +117,28 @@ class TestDeveloperPanels:
         assert "GetRobotTeachingPoint" in src
         assert "confirmGateway" in src, "frame/table writes keep the confirm flow"
 
+    def test_taught_points_live_on_the_gateway_not_in_the_browser(self):
+        """A taught point is production data. In localStorage it died with a
+        browser profile and no API client or CI job could see it, so the
+        panel now reads and writes the gateway's pose store — and migrates
+        anything a previous version left behind rather than stranding it."""
+        src = (WEB / "js" / "teach.js").read_text()
+        assert "/api/v1/poses" in src, "the panel uses the gateway store"
+        assert "migrateLegacyPoints" in src, "old browser points are moved"
+        # The only localStorage read left for points must be the migration.
+        assert "savePoints" not in src, "no writing points to the browser"
+        assert src.count("LS_POINTS") <= 3, (
+            "LS_POINTS should survive only for the one-time migration")
+        assert "stored by the gateway" in src, "the UI says where they live"
+
+    def test_program_generation_is_the_gateways_job(self):
+        """The MoveJ prototype and its probed 29-argument arity live in one
+        place. Two copies is how they drift."""
+        src = (WEB / "js" / "teach.js").read_text()
+        assert "/api/v1/poses/program" in src
+        assert "function generateProgram" not in src, (
+            "the console must not carry a second whole-program generator")
+
     def test_work_object_reset_sends_exactly_the_identity_frame(self):
         """"Reset to base" is an ordinary frame define whose payload is pinned
         here: all-zero offset in ref 0. If a future edit changes what reset

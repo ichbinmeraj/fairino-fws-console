@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fairino-fws-console"
-version = "0.1.0a0"
+version = "0.1.0a1"
 description = "Operator console for FWS, the Fairino robot gateway"
 authors = [{ name = "Meraj Safari" }]
 readme = "README.md"
@@ -28,10 +28,12 @@ classifiers = [
 # bundler, no framework and no CDN, because a robot cell may have no route to
 # the internet at all.
 #
-# >=0.1.0a1: the first gateway release whose cli.main() accepts the
-# configure_app hook this package mounts through. 0.1.0a0 predates it.
+# >=0.1.0a5: the first gateway release with the pose store the Teach panel
+# reads and writes (/api/v1/poses). The configure_app hook this package
+# mounts through arrived in 0.1.0a1; the pin moved forward when Teach
+# stopped keeping taught points in the browser.
 dependencies = [
-  "fairino-fws>=0.1.0a1",
+  "fairino-fws>=0.1.0a5",
 ]
 
 [project.urls]

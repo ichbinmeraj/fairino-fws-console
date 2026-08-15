@@ -4,7 +4,26 @@ All notable changes to `fairino-fws-console` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); the project follows
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
-## [Unreleased]
+## [0.1.0a1] — 2026-08-15
+
+### Changed
+
+- **Taught points live on the gateway now**, not in this browser. A taught
+  point is production data; in `localStorage` it died with a browser
+  profile, could not be reviewed or backed up, and no API client or CI job
+  could see it. The Teach panel reads and writes `/api/v1/poses`, and
+  migrates anything a previous version left behind on first load — clearing
+  the local copy only once every point is safely elsewhere.
+
+  Capture is the gateway's job too: it takes one telemetry frame, so a
+  pose's joint and Cartesian halves cannot disagree, and it refuses a stale
+  frame rather than recording where the arm used to be.
+
+- Whole-program generation moved to `POST /api/v1/poses/program`, which owns
+  the MoveJ prototype and asserts its probed arity. The console's own
+  generator is gone: two copies of that knowledge is how they drift.
+
+- Requires `fairino-fws>=0.1.0a5`.
 
 ### Added
 
