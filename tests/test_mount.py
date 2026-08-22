@@ -148,6 +148,24 @@ class TestDeveloperPanels:
         stream = (WEB / "js" / "stream.js").read_text()
         assert "'keepalive'" in stream
 
+    def test_the_mode_toggle_never_defaults(self):
+        """The controller silently ignores program starts in manual mode --
+        nothing fails, nothing runs -- so the mode must be visible, and
+        honest. It is not in the telemetry frame: the console reads
+        GET /api/v1/robot/mode, renders null (or a gateway without the
+        endpoint) as an explicit Unknown third state, gates the switch on
+        the same control lease as jog/enable, and locks it while a program
+        is running."""
+        html = (WEB / "index.html").read_text()
+        assert 'id="seg-mode"' in html
+        assert 'data-mode="auto"' in html and 'data-mode="manual"' in html
+        api_js = (WEB / "js" / "api.js").read_text()
+        assert "/api/v1/robot/mode" in api_js
+        main = (WEB / "js" / "main.js").read_text()
+        assert "loadMode" in main, "the mode is fetched, never assumed"
+        assert "'Unknown'" in main, "null renders as Unknown, not a default"
+        assert "programRunning" in main, "the toggle locks while a program runs"
+
     def test_taught_points_live_on_the_gateway_not_in_the_browser(self):
         """A taught point is production data. In localStorage it died with a
         browser profile and no API client or CI job could see it, so the

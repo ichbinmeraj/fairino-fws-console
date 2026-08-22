@@ -32,6 +32,9 @@ let readOnly = false;
 let toolOffset = null;
 let toolKnown = false;      // false => the drawn tip omits the tool transform
 let enabledState = null;            // null = unknown until first command
+let modeState = null;               // 'auto' | 'manual' | null = unknown
+let modeSource = '';                // where GET /robot/mode said its answer came from
+let programRunning = null;          // from the frame; null until first seen
 let leaseExpiresAt = 0;             // epoch seconds, for the local countdown
 let leaseTtl = 30;
 
@@ -221,7 +224,7 @@ function setStatus(id, level, text) {
 /** The narrow layout hides the header cluster; mirror it into the strip so
  * a tablet operator is never blind to stream/lease/power state. */
 function buildStatusStrip() {
-  $('status-strip').innerHTML = ['sc-stream', 'sc-lease', 'sc-enable']
+  $('status-strip').innerHTML = ['sc-stream', 'sc-lease', 'sc-enable', 'sc-mode']
     .map((id) => {
       const src = $(id);
       const clone = src.cloneNode(true);
@@ -239,6 +242,10 @@ enableSwitch.onclick = () => {
   const next = enableSwitch.getAttribute('aria-checked') !== 'true';
   run(next ? 'enabled arm' : 'disabled arm', () => api.enable(next))
     .then((r) => {
+      // The gateway's enable path sends Mode(manual) BEFORE RobotEnable, so
+      // even a failed command may already have switched the mode — re-read
+      // it either way rather than keep showing a mode the robot left.
+      loadMode({ quiet: true });
       if (r === RUN_FAILED) return;
       enabledState = next;
       reflectEnable();
@@ -260,6 +267,49 @@ function reflectEnable() {
   setStatus('sc-enable',
     enabledState ? 'ok' : enabledState === null ? 'warn' : '',
     enabledState === null ? '?' : enabledState ? 'on' : 'off');
+}
+
+// ---- Auto / Manual mode --------------------------------------------------
+// The controller SILENTLY ignores program starts in manual mode — nothing
+// fails, nothing runs (found on live hardware). So the mode must be visible,
+// and honestly so: it is not in the telemetry frame, so it comes from
+// GET /api/v1/robot/mode — at boot, after every mode set, and after enable
+// (whose gateway path forces manual on the wire). A gateway that cannot
+// observe it answers null, rendered as a third UNKNOWN state, not a default.
+
+const modeSeg = $('seg-mode');
+
+for (const b of modeSeg.querySelectorAll('button')) {
+  b.onclick = () => {
+    const next = b.dataset.mode;               // 'auto' | 'manual'
+    if (next === modeState) return;            // already there — nothing to send
+    run(`switched to ${next.toUpperCase()} mode`, () => api.setMode(next))
+      .then((r) => {
+        if (r === RUN_FAILED) return;
+        modeState = next;                      // optimistic; the re-read confirms
+        reflectMode();
+        loadMode({ quiet: true });
+      });
+  };
+}
+
+function reflectMode() {
+  for (const b of modeSeg.querySelectorAll('button')) {
+    b.setAttribute('aria-pressed', String(modeState === b.dataset.mode));
+  }
+  modeSeg.classList.toggle('unknown', modeState === null);
+  modeSeg.title = programRunning === true
+    ? 'The mode cannot change while a program is running.'
+    : modeState === null
+      ? `Mode unknown${modeSource ? ` — ${modeSource}` : ''}`
+      : modeState === 'manual'
+        ? 'Manual mode: the controller silently ignores program starts.'
+        : '';
+  $('mode-label').textContent =
+    modeState === null ? 'Unknown' : modeState === 'auto' ? 'Auto' : 'Manual';
+  setStatus('sc-mode',
+    modeState === 'auto' ? 'ok' : modeState === null ? 'warn' : '',
+    modeState === null ? '?' : modeState);
 }
 
 $('btn-reset').onclick = () => run('reset faults', () => api.resetErrors());
@@ -487,6 +537,11 @@ function buildJogPads() {
 function syncControls() {
   const ready = !readOnly && lease.held && !commanding;
   for (const b of document.querySelectorAll('[data-cmd]')) b.disabled = !ready;
+  // A mode change under a running program strands or kills it; while the
+  // frame says one is running, the toggle stays off even with control held.
+  for (const b of modeSeg.querySelectorAll('button')) {
+    b.disabled = !ready || programRunning === true;
+  }
   enableSwitch.disabled = !ready;
   $('btn-reset').disabled = !ready;
   $('fault-banner-reset').disabled = !ready;
@@ -571,6 +626,15 @@ stream.onFrame = (f) => {
   frames++;
   pendingFrame = f;
   if (f.limits) lastLimits = f.limits;
+  // Wire program state: 1 stopped, 2 running, 3 paused. The mode toggle
+  // locks while running; the edge is detected here so the (DOM-wide)
+  // syncControls runs on change, not at 10 Hz.
+  const running = f.program_state === 2;
+  if (running !== programRunning) {
+    programRunning = running;
+    syncControls();
+    reflectMode();                 // the tooltip explains the lock-out
+  }
   // Panels outside this module (the Develop workbench) subscribe to frames
   // through this event rather than the render pipeline; a hidden panel
   // returns immediately, so the cost is one dispatch per frame.
@@ -791,6 +855,33 @@ async function loadToolFrame() {
   }
 }
 
+/** Refresh the auto/manual mode from the gateway. A gateway that cannot
+ * observe the controller's mode answers {mode: null, source: …}; an older
+ * gateway without the endpoint 404s. Both land in the same honest Unknown —
+ * the toggle never invents a default. */
+async function loadMode({ quiet = false } = {}) {
+  try {
+    const m = await api.mode();
+    modeState = m && (m.mode === 'auto' || m.mode === 'manual') ? m.mode : null;
+    modeSource = (m && m.source) || '';
+    if (!quiet) {
+      log(modeState
+        ? `robot mode: ${modeState} (${modeSource || 'gateway'})`
+        : `robot mode unknown${modeSource ? ` — ${modeSource}` : ''}`);
+    }
+  } catch (e) {
+    const noEndpoint = e instanceof ApiError && e.status === 404;
+    if (!quiet) {
+      log(`robot mode unavailable: ${noEndpoint
+        ? 'this gateway has no /robot/mode endpoint'
+        : e.message}`, 'warn');
+    }
+    // Keep what we knew: a failed refresh must not erase a known mode,
+    // and at boot there is nothing to erase.
+  }
+  reflectMode();
+}
+
 /* ---------------------------------------------------------------- tabs */
 
 // Operator tabs first, then the developer surface; the rail draws a
@@ -933,6 +1024,7 @@ async function boot() {
   buildJogPads();
   buildSparks();
   reflectEnable();
+  reflectMode();
   syncControls();
   applyTheme(themePref());
 
@@ -981,6 +1073,7 @@ async function boot() {
   } catch { /* the stream carries limits too */ }
 
   await loadToolFrame();
+  await loadMode();
 
   stream.connect();
   events.onEvent = onGatewayEvent;
@@ -1054,6 +1147,10 @@ registerPalette(() => [
   { group: 'Action', label: 'STOP the robot', hint: 'Esc',
     run: () => $('btn-stop').click() },
   { group: 'Action', label: 'Reset faults', run: () => $('btn-reset').click() },
+  { group: 'Action', label: 'Switch to AUTO mode',
+    run: () => modeSeg.querySelector('[data-mode="auto"]')?.click() },
+  { group: 'Action', label: 'Switch to MANUAL mode',
+    run: () => modeSeg.querySelector('[data-mode="manual"]')?.click() },
   { group: 'Action', label: 'Fit the 3D view', run: () => view.fit() },
   { group: 'Action', label: 'Clear the TCP trail', run: () => view.clearTrail() },
   { group: 'Action', label: 'Cycle the theme', run: () => $('btn-theme').click() },

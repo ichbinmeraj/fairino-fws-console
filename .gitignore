@@ -13,3 +13,9 @@ api-keys
 *.toml.local
 ff-profile/
 chrome-profile/
+
+# Runtime artifacts a dev/test gateway writes into the cwd.
+poses.json
+recordings/
+files.json
+programs.json

@@ -65,5 +65,4 @@ headless browser, not in the pytest suite; describe such changes in the PR.
 
 ## Commits
 
-Small, focused commits with a message that says *why*. End the trailer with
-`Co-Authored-By:` if a tool helped.
+Small, focused commits with a message that says *why*.

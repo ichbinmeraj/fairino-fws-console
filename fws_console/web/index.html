@@ -65,6 +65,7 @@
       <span class="ann" id="sc-stream"><i class="dot"></i><label>LINK</label><span id="sc-stream-text">—</span></span>
       <span class="ann" id="sc-lease"><i class="dot"></i><label>CTRL</label><span id="sc-lease-text">observe</span></span>
       <span class="ann" id="sc-enable"><i class="dot"></i><label>POWER</label><b id="sc-enable-text">—</b></span>
+      <span class="ann" id="sc-mode"><i class="dot"></i><label>MODE</label><b id="sc-mode-text">—</b></span>
       <span class="ann" id="sc-fault"><i class="dot"></i><label>FAULT</label><span id="sc-fault-text">none</span></span>
     </div>
 
@@ -155,6 +156,14 @@
             <button class="btn btn-sm" id="btn-reset" disabled>
               <svg viewBox="0 0 17 17"><use href="#i-reset"/></svg>Reset faults
             </button>
+          </div>
+          <div class="field-row" style="margin:10px 0 0">
+            <label id="mode-legend">Mode</label>
+            <span class="seg" id="seg-mode" role="group" aria-labelledby="mode-legend">
+              <button data-cmd="1" data-mode="auto" aria-pressed="false" disabled>AUTO</button>
+              <button data-cmd="1" data-mode="manual" aria-pressed="false" disabled>MANUAL</button>
+            </span>
+            <b class="small" id="mode-label">Unknown</b>
           </div>
           <div class="small faint" style="margin-top:8px">
             Stop is a functional stop, not an emergency stop.</div>

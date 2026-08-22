@@ -137,10 +137,14 @@ export class Api {
   errors()       { return this.get('/api/v1/errors'); }
   events(limit = 100) { return this.get(`/api/v1/events?limit=${limit}`); }
   controlStatus(){ return this.get('/api/v1/control'); }
+  mode()         { return this.get('/api/v1/robot/mode'); }
 
   // --- commanding ---------------------------------------------------------
 
   enable(on)     { return this.post('/api/v1/robot/enable', { enable: on, confirm: true }); }
+  // confirm rides along like enable's: auto mode arms remote program starts,
+  // and the gateway refuses it without an explicit confirm.
+  setMode(mode)  { return this.put('/api/v1/robot/mode', { mode, confirm: true }); }
   resetErrors()  { return this.post('/api/v1/errors/reset', {}); }
   stop()         { return this.post('/api/v1/motion/stop', {}); }
 

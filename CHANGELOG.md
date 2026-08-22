@@ -4,6 +4,32 @@ All notable changes to `fairino-fws-console` are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); the project follows
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+## [Unreleased]
+
+### Added
+
+- **An AUTO / MANUAL mode toggle on the Operate panel.** The controller
+  silently ignores program starts while it is in manual mode — nothing
+  fails, nothing runs — so the mode has to be visible before the Run button
+  can be trusted. The Master panel gains an AUTO | MANUAL segmented control
+  beside Arm power, a MODE annunciator in the header (mirrored into the
+  narrow-layout strip), and palette actions for both switches.
+
+  The mode is not in the telemetry frame, so it is read from
+  `GET /api/v1/robot/mode` — at boot, after every mode set, and after an
+  enable command (the gateway's enable path forces manual on the wire). A
+  gateway that cannot observe the controller's mode answers `null`, and an
+  older gateway without the endpoint 404s; both render as an explicit
+  third **Unknown** state — dashed frame, neither segment lit — never a
+  confident default. Switching goes through `PUT /api/v1/robot/mode` under
+  the same control lease as jog and enable, carries the same upfront
+  `confirm` as enable (auto mode arms remote program starts), and the
+  toggle locks out while a program is running.
+
+- Live mode state requires a `fairino-fws` gateway exposing
+  `GET`/`PUT /api/v1/robot/mode`; against older gateways the toggle shows
+  Unknown and says so once in the activity log.
+
 ## [0.1.0a2] — 2026-08-15
 
 ### Added

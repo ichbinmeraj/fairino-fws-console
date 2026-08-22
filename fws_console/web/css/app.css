@@ -362,7 +362,11 @@ section[data-tab] { max-width: 1460px; margin: 0 auto; }
 }
 .seg button:last-child { border-right: none; }
 .seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); }
-.seg button:hover:not([aria-pressed="true"]) { background: var(--hover); color: var(--text); }
+.seg button:hover:not([aria-pressed="true"]):not(:disabled) { background: var(--hover); color: var(--text); }
+.seg button:disabled { opacity: 0.38; cursor: not-allowed; }
+/* Unknown mode: neither segment claims a state the gateway never reported —
+   the dashed frame matches the enable switch's third position. */
+.seg.unknown { border-style: dashed; border-color: var(--warn); }
 
 /* slider */
 input[type="range"] {
